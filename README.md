@@ -67,21 +67,21 @@ Learner answer -> Diagnosis (classifier) -> Explanation + replay
 
 ## Quick start
 
-Requires Python 3.11 or newer.
+Requires Python 3.11 or newer, Git LFS, and enough local memory for the
+adapter's compatible base model.
 
 ```bash
-git clone https://github.com/<team>/<repo>.git
-cd <repo>
-
-python -m venv .venv
-# Windows:   .venv\Scripts\activate
-# Mac/Linux: source .venv/bin/activate
-
-pip install -r requirements.txt
-streamlit run streamlit_app.py
+git clone https://github.com/kunalsinghparmar13/Misconception-Tutor.git
+cd Misconception-Tutor
+git lfs pull
+chmod +x run_app.sh
+./run_app.sh
 ```
 
-The app opens at `http://localhost:8501`.
+Open `http://localhost:8000`. The approved interface is `UI and UX/code.html`.
+The backend serves that interface and routes every answer through the PEFT
+adapter in `LLM/`. Set `LLM_BASE_MODEL` to override the base model named in
+`LLM/adapter_config.json`.
 
 **Load demo data** (optional, fills 5 fake learners so the profile and teacher pages look populated):
 
@@ -92,17 +92,12 @@ python data/seed_demo.py
 ## Project structure
 
 ```
-streamlit_app.py        # practice + feedback screen
-pages/                  # profile, teacher view, study mode
-ui/                     # small UI helpers
-diagnosis/              # features, training, classify(), pick_next(), update()
-problems/               # bugs.py, generator.py, api.py
-tracking/               # db.py, api.py, simulate.py
-models/                 # saved .joblib models
-data/                   # taxonomy.json, gen_synthetic.py, real_test.csv, seed_demo.py
-notebooks/              # experiments and evaluation
-tests/                  # pytest tests
-docs/                   # charts, screenshots, slides, research note
+UI and UX/code.html     # approved responsive tutor interface
+UI and UX/app.js        # sends composer questions to the backend
+backend/api.py          # Flask server and local LLM adapter runtime
+backend/backend_code.py # exact arithmetic and misconception engine
+LLM/                    # PEFT adapter, tokenizer, and checkpoints
+run_app.sh              # creates the venv, installs dependencies, starts the app
 .github/workflows/      # CI (runs pytest)
 ```
 

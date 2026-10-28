@@ -11,6 +11,7 @@ This folder provides all design specifications, source code, and visual assets c
 | File | Purpose |
 |---|---|
 | [`code.html`](code.html) | Complete, zero-dependency, responsive HTML5 + Tailwind CSS interface. |
+| [`app.js`](app.js) | Browser bridge that submits tutor prompts to the local LLM backend. |
 | [`DESIGN.md`](DESIGN.md) | Full Design System token specifications (Color palette, Typography, Elevation, Spacing). |
 | [`screen.png`](screen.png) | High-resolution visual snapshot of the rendered interface. |
 | [`EXPLANATION.md`](EXPLANATION.md) | This document: in-depth architectural and code breakdown for readers and developers. |
@@ -113,7 +114,8 @@ The entire application interface is contained in `code.html`. It runs directly i
 
 ## 4. Client-Side JavaScript Logic
 
-Located inside `<script>` (Lines 201–263):
+The original prototype behavior remains inline in `code.html`; the application
+bridge is in [`app.js`](app.js):
 
 ```javascript
 // 1. Switches active subject between Mathematics and Python
@@ -125,6 +127,13 @@ function stagePrompt(text) { ... }
 // 3. Dismisses the notification banner
 function clearStagedPrompt() { ... }
 ```
+
+The bridge tracks the selected subject, submits the composer text to
+`POST /api/llm/answer`, displays the generated response, and shows explicit
+backend errors when the local adapter is unavailable. It never calls Gemini or
+uses a client-side answer fallback.
+
+The existing inline helpers continue to provide:
 
 1. **`setSubject(subject)`**:
    - Manages active border ring classes (`ring-2 ring-primary`).
@@ -144,9 +153,20 @@ function clearStagedPrompt() { ... }
 
 ## 5. How to Run & View the UI
 
-Because this prototype is entirely self-contained:
+For the complete application, run it from the repository root:
 
-### Option 1: Direct File Open
+```bash
+./run_app.sh
+```
+
+Then open `http://localhost:8000`. Flask serves `code.html`, `app.js`, and the
+API from one origin, while the first answer request lazily loads the PEFT
+adapter in `LLM/`.
+
+The HTML can still be viewed directly:
+
+### Direct File Open
+
 Double-click `code.html` or open it via terminal:
 ```bash
 # macOS
@@ -159,7 +179,7 @@ xdg-open "UI and UX/code.html"
 start "UI and UX/code.html"
 ```
 
-### Option 2: Local Static Server
+### Static Server (prototype only)
 ```bash
 # Using Python
 python3 -m http.server 8000
@@ -169,10 +189,15 @@ python3 -m http.server 8000
 
 ---
 
-## 6. Integration with Python Backend (`backend/backend_code.py`)
+## 6. Integration with Python Backend (`backend/api.py`)
 
-This UI connects cleanly with the backend math engine:
-- The input textarea collects the student's problem prompt and submitted answer.
-- The input is passed to `parse_fraction()` and the canonical buggy rule diagnostic pipeline (`M1` to `M5`).
-- The backend's `why_we_think_this` cognitive replay is rendered in the diagnostic response panel.
-- The backend's targeted problem generator produces isomorphic follow-up problems displayed in the practice module.
+The Flask API serves the approved UI and exposes:
+
+- `GET /api/health` for service and dependency status.
+- `GET /api/backend-status` for the UI/backend readiness state.
+- `POST /api/llm/answer` for local adapter generation.
+
+The adapter is loaded lazily from `LLM/`. Its compatible base model is read
+from `LLM_BASE_MODEL`, defaulting to the model declared by the checked-in
+adapter configuration. If dependencies, model files, or network access are
+missing, the API returns a clear `503` rather than silently switching models.
