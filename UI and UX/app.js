@@ -20,6 +20,21 @@
     '<pre id="llm-answer" class="whitespace-pre-wrap font-body-md text-body-md text-on-surface"></pre>';
   document.querySelector('main > div')?.prepend(response);
 
+  async function refreshBackendStatus() {
+    const modelLabel = document.querySelector('header > div:first-child > span:last-child');
+    if (!modelLabel) return;
+    try {
+      const result = await fetch('/api/backend-status');
+      if (!result.ok) return;
+      const status = await result.json();
+      modelLabel.textContent = status.model
+        ? `Active Model: ${status.model}`
+        : 'Active Model: Local Tutor';
+    } catch (error) {
+      console.warn('Unable to read backend status.', error);
+    }
+  }
+
   function setLoading(loading) {
     sendButton.disabled = loading;
     sendButton.classList.toggle('opacity-50', loading);
@@ -75,4 +90,5 @@
     }
   });
   updateCounter();
+  refreshBackendStatus();
 })();
