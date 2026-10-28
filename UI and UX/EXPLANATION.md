@@ -156,7 +156,9 @@ The existing inline helpers continue to provide:
 For the complete application, run it from the repository root:
 
 ```bash
-./run_app.sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m backend.api
 ```
 
 Then open `http://localhost:8000`. Flask serves `code.html`, `app.js`, and the

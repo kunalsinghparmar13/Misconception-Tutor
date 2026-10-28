@@ -17,7 +17,9 @@ open "UI and UX/code.html"
 For the connected application, run the Python backend from the repository root:
 
 ```bash
-./run_app.sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m backend.api
 ```
 
 Then open `http://localhost:8000`. The Send button uses the checked-in PEFT

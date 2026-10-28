@@ -74,8 +74,9 @@ adapter's compatible base model.
 git clone https://github.com/kunalsinghparmar13/Misconception-Tutor.git
 cd Misconception-Tutor
 git lfs pull
-chmod +x run_app.sh
-./run_app.sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m backend.api
 ```
 
 Open `http://localhost:8000`. The approved interface is `UI and UX/code.html`.
@@ -91,7 +92,6 @@ UI and UX/app.js        # sends composer questions to the backend
 backend/api.py          # Flask server and local LLM adapter runtime
 backend/backend_code.py # exact arithmetic and misconception engine
 LLM/                    # PEFT adapter, tokenizer, and checkpoints
-run_app.sh              # creates the venv, installs dependencies, starts the app
 .github/workflows/      # CI (runs pytest)
 ```
 
