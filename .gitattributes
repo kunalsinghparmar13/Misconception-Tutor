@@ -1,0 +1,15 @@
+LLM/**/*.safetensors filter=lfs diff=lfs merge=lfs -text
+LLM/**/*.pt filter=lfs diff=lfs merge=lfs -text
+LLM/**/*.pth filter=lfs diff=lfs merge=lfs -text
+LLM/**/*.bin filter=lfs diff=lfs merge=lfs -text
+LLM/adapter_model.safetensors filter=lfs diff=lfs merge=lfs -text
+LLM/checkpoint-500/adapter_model.safetensors filter=lfs diff=lfs merge=lfs -text
+LLM/checkpoint-500/optimizer.pt filter=lfs diff=lfs merge=lfs -text
+LLM/checkpoint-500/rng_state.pth filter=lfs diff=lfs merge=lfs -text
+LLM/checkpoint-500/scheduler.pt filter=lfs diff=lfs merge=lfs -text
+LLM/checkpoint-500/training_args.bin filter=lfs diff=lfs merge=lfs -text
+LLM/checkpoint-923/adapter_model.safetensors filter=lfs diff=lfs merge=lfs -text
+LLM/checkpoint-923/optimizer.pt filter=lfs diff=lfs merge=lfs -text
+LLM/checkpoint-923/rng_state.pth filter=lfs diff=lfs merge=lfs -text
+LLM/checkpoint-923/scheduler.pt filter=lfs diff=lfs merge=lfs -text
+LLM/checkpoint-923/training_args.bin filter=lfs diff=lfs merge=lfs -text
