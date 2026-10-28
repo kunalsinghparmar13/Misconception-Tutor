@@ -63,7 +63,7 @@ Learner answer -> Diagnosis (classifier) -> Explanation + replay
 | Problem generator | `problems/` | Targeted problems, verified with exact fractions |
 | Diagnosis | `diagnosis/` | Feature extraction, classifier, adaptive picker |
 | Tracking | `tracking/` | SQLite attempts, per-learner profile |
-| App | `streamlit_app.py`, `pages/` | Practice, profile, teacher view, study mode |
+| App | `UI and UX/`, `backend/` | Approved tutor interface connected to the local LLM |
 
 ## Quick start
 
@@ -83,12 +83,6 @@ The backend serves that interface and routes every answer through the PEFT
 adapter in `LLM/`. Set `LLM_BASE_MODEL` to override the base model named in
 `LLM/adapter_config.json`.
 
-**Load demo data** (optional, fills 5 fake learners so the profile and teacher pages look populated):
-
-```bash
-python data/seed_demo.py
-```
-
 ## Project structure
 
 ```
@@ -101,27 +95,13 @@ run_app.sh              # creates the venv, installs dependencies, starts the ap
 .github/workflows/      # CI (runs pytest)
 ```
 
-## Function contract
+## Runtime contract
 
-The three parts of the system connect through these functions.
-
-```python
-# diagnosis/api.py
-classify(problem, student_answer) -> {"top": misc_id, "probs": {misc_id: p}, "unknown": bool}
-pick_next(belief, candidates)     -> problem dict
-update(belief, answer, bug_answers) -> belief dict
-
-# problems/api.py
-generate_problem(misc_id, difficulty=1) -> {
-    "text", "correct_answer", "bug_answers": {misc_id: answer},
-    "target": misc_id, "numbers": [a, b, c, d], "type": "add" | "divide"
-}
-
-# tracking/api.py
-log_attempt(learner_id, session_id, problem_id, target_misc,
-            answer, correct, predicted_misc, confidence)
-get_profile(learner_id) -> {misc_id: [bug_rate_session1, ...]}
-```
+The Flask service serves `UI and UX/code.html` at `/`, serves its browser bridge
+at `/app.js`, and exposes `/api/llm/answer` for tutor responses. The service
+uses only the checked-in PEFT adapter in `LLM/`; if the adapter dependencies or
+compatible base model are unavailable, it returns an explicit error instead of
+starting a different frontend or answer provider.
 
 ## Data
 
