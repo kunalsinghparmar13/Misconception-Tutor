@@ -1,8 +1,8 @@
 {
   "base_model": "unsloth/gemma-4-E4B-it",
-  "smoke_test": false,
-  "epochs": 1,
-  "learning_rate": 2e-05,
-  "lora_r": 16,
-  "max_seq": 512
+  "latest_checkpoint": "checkpoint-1003",
+  "global_step": 1003,
+  "epochs_completed": 3.98,
+  "final_loss": 0.2209,
+  "timestamp": "2026-10-29T12:41:04.786177"
 }

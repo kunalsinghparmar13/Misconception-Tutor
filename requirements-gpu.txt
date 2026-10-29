@@ -1,0 +1,4 @@
+-r requirements.txt
+torch
+transformers>=5.0.0
+peft>=0.21.0

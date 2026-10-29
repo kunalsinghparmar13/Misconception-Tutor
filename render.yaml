@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: misconception-tutor
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: Dockerfile
+    envVars:
+      - key: BACKEND_HOST
+        value: 0.0.0.0
+      - key: AUTO_TRAIN_ENABLED
+        value: "1"

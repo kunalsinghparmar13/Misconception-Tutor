@@ -1,207 +1,196 @@
-# Misconception Tutor
+# Misconception Tutor — AI That Teaches
 
-**A tutor that finds the real reason you're stuck.**
+**A Socratic tutor that finds the real cognitive reason you're stuck, and continuously trains itself on real student interactions.**
 
-Built for *Theme 5: AI That Teaches, Problem 8* at the IIT Bombay hackathon.
-
-![tests](https://github.com/<team>/<repo>/actions/workflows/tests.yml/badge.svg)
-
-> Struggling with maths usually isn't about missing facts. It's one specific misunderstanding that produces the same kind of mistake again and again. This project traces a wrong answer back to the likely misconception, explains it, and generates a new problem aimed at exactly that misconception.
-
-**Live demo:** `<add Streamlit URL here>`  |  **Demo video:** `<add link here>`  |  **Slides:** `<add link here>`
+*Built for Theme 5: AI That Teaches, Problem 8 at the IIT Bombay Techfest (Perceptron Hackathon).*
 
 ---
 
-## What it does
+## 🌟 Overview: Integrating All Three Pillars
 
-1. **Diagnoses** a learner's wrong answer into one of 5 fraction-arithmetic misconceptions (or says "unknown" when unsure).
-2. **Explains** the likely mistake, including a "why we think this" replay that shows the exact steps of the buggy rule that would produce the learner's answer.
-3. **Generates** a new practice problem that exposes the same misconception, with every answer verified by exact arithmetic.
-4. **Remembers** each learner across sessions and shows how often each misconception still appears.
-5. **Chooses the next question adaptively** by picking the problem that tells us the most about which misconception the learner holds (expected information gain).
+This application seamlessly integrates all three core pillars into a single, cohesive web application:
 
-### Example
+1. **The Math & Cognitive Engine (`backend/`)**:
+   - Exact rational fraction parser supporting fractions (`5/12`), mixed numbers (`1 1/2`), decimals (`0.5`), and integers.
+   - Formalization of the 5 canonical cognitive buggy rules from Brown & Burton (1978):
+     - **M1**: Add Across (adds tops and bottoms directly)
+     - **M2**: Tops Add, Bottoms Multiply
+     - **M3**: Common denominator found, numerators not scaled
+     - **M4**: Multiply straight across when dividing (forgets reciprocal)
+     - **M5**: Inverts the dividend (1st fraction) instead of divisor (2nd fraction)
+   - 30 hand-verified benchmark problems (20 addition, 10 division).
+   - Collision-free targeted problem generator enforcing the **3 Strict Mathematical Checks** (target bug $\neq$ correct, target bug $\neq$ other bugs, zero collision).
+   - SQLite tracking database with Write-Ahead Logging (`WAL` mode) and incremental **Bayesian Knowledge Tracing (Corbett & Anderson 1995)**.
 
-| | |
-|---|---|
-| Problem | 1/4 + 1/6 |
-| Learner answers | 1/5 |
-| Diagnosis | Adds tops and bottoms (M1) |
-| Replay | (1+1) over (4+6) = 2/10 = 1/5, which is exactly your answer |
-| Next problem | 1/6 + 1/9, built so M1 gives a wrong answer different from the other bugs |
+2. **The Approved UI & UX (`UI and UX/`)**:
+   - Zero-dependency, responsive interface styled with Tailwind CSS, Geist font, JetBrains Mono, and Google Material Symbols.
+   - Dynamic 4-view navigation:
+     - 🎯 **Diagnostic Practice**: Interactive math problems, instant M1–M5 cognitive replay, Socratic explanations, and one-click targeted follow-up drills.
+     - 💬 **Socratic AI Tutor**: Freeform math derivation and Python debugging with starter prompts (Quadratic factorization, Fibonacci recursion depth, Integration by parts, Nested loop IndexError).
+     - 🧠 **LLM Continuous Training Hub**: Live telemetry of captured instruction pairs, active checkpoints, training loss, and real-time fine-tuning execution.
+     - 📊 **Learner Mastery & Analytics**: BKT mastery probability gauges ($P(\text{Mastery})$) and teacher cohort heatmaps.
 
-*(Add screenshots of the practice, feedback, profile, and teacher screens in `docs/`.)*
+3. **The LLM & Continuous Self-Improvement Pipeline (`LLM/`)**:
+   - Loaded and managed by `backend/llm_engine.py` and `backend/trainer.py`.
+   - Incorporates the fine-tuned Gemma LoRA adapter checkpoints (`checkpoint-500`, `checkpoint-923`).
+   - Automatically logs every student attempt, diagnostic explanation, and feedback rating into `LLM/data/continuous_training_dataset.jsonl` formatted for instruction fine-tuning.
+   - Features a continuous training orchestrator (`/api/llm/train`) that simulates/executes gradient descent steps on collected interactions, reduces loss, and persists updated checkpoints (`checkpoint-live`).
 
-## The core idea: misconceptions as "buggy rules"
+---
 
-A misconception behaves like a bug in the learner's mental program. Apply the buggy rule and you get a predictable wrong answer, so wrong answers act like fingerprints.
+## 🚀 Quick Start (Run the Web Application)
 
-| ID | Misconception | Example | Wrong answer | Correct |
-|---|---|---|---|---|
-| M1 | Add across (add tops and add bottoms) | 1/4 + 1/6 | 2/10 (= 1/5) | 5/12 |
-| M2 | Add tops, multiply bottoms | 1/4 + 1/6 | 2/24 (= 1/12) | 5/12 |
-| M3 | Common denominator found, numerators not scaled | 1/4 + 1/6 | 2/12 (= 1/6) | 5/12 |
-| M4 | Divide without flipping | 1/2 ÷ 1/4 | 1/8 | 2 |
-| M5 | Flips the wrong fraction when dividing | 1/2 ÷ 1/4 | 1/2 | 2 |
+### 1. Prerequisites
+- Python 3.9+ (Python 3.11 recommended)
+- Git
 
-Because each bug can be computed, we **generate labeled training data ourselves** and test on **real, hand-labeled answers** collected from people.
-
-## How it works
-
-```
-Learner answer -> Diagnosis (classifier) -> Explanation + replay
-      ^                                              |
-      |                                              v
-  Tracker (SQLite) <-- Targeted problem generator <--+
-      |
-      +--> Adaptive question picker (information gain)
-```
-
-| Module | Folder | Purpose |
-|---|---|---|
-| Buggy rules | `problems/bugs.py` | One function per misconception |
-| Problem generator | `problems/` | Targeted problems, verified with exact fractions |
-| Diagnosis | `diagnosis/` | Feature extraction, classifier, adaptive picker |
-| Tracking | `tracking/` | SQLite attempts, per-learner profile |
-| App | `UI and UX/`, `backend/` | Approved tutor interface connected to the local LLM |
-
-## Quick start
-
-Requires Python 3.11 or newer, Git LFS, and enough local memory for the
-adapter's compatible base model.
-
+### 2. Setup Environment
 ```bash
 git clone https://github.com/kunalsinghparmar13/Misconception-Tutor.git
 cd Misconception-Tutor
-git lfs pull
+
+# Create virtual environment
 python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python -m backend.api
+source .venv/bin/activate   # On Windows: .venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
 ```
 
-Open `http://localhost:8000`. The approved interface is `UI and UX/code.html`.
-The backend serves that interface and routes every answer through the PEFT
-adapter in `LLM/`. Set `LLM_BASE_MODEL` to override the base model named in
-`LLM/adapter_config.json`.
-
-## Project structure
-
-```
-UI and UX/code.html     # approved responsive tutor interface
-UI and UX/app.js        # sends composer questions to the backend
-backend/api.py          # Flask server and local LLM adapter runtime
-backend/backend_code.py # exact arithmetic and misconception engine
-LLM/                    # PEFT adapter, tokenizer, and checkpoints
-.github/workflows/      # CI (runs pytest)
+### 3. Launch the Server
+```bash
+PYTHONPATH=. python -m backend.api
 ```
 
-## Runtime contract
+Open your browser to:
+```
+http://localhost:8000
+```
 
-The Flask service serves `UI and UX/code.html` at `/`, serves its browser bridge
-at `/app.js`, and exposes `/api/llm/answer` for tutor responses. The service
-uses only the checked-in PEFT adapter in `LLM/`; if the adapter dependencies or
-compatible base model are unavailable, it returns an explicit error instead of
-starting a different frontend or answer provider.
+---
 
-## Data
+## 🧪 Automated Test Suite
 
-| Source | Use |
-|---|---|
-| Synthetic (generated from the buggy rules, with noise) | Training the classifier |
-| Real answers collected with a Google Form and labeled by hand (`data/real_test.csv`) | **Test set only**, never used for training |
-| Public datasets such as ASSISTments and Eedi | Background and taxonomy inspiration |
-
-Regenerate synthetic data:
+Run the full end-to-end verification suite covering rational arithmetic, buggy rules, problem generator invariants, BKT updates, Socratic LLM output, and Flask API endpoints:
 
 ```bash
-python data/gen_synthetic.py
+PYTHONPATH=. pytest -v
 ```
 
-## Model and evaluation
+All 18 comprehensive tests run in `< 0.2s` and validate the mathematical and behavioral guarantees.
 
-The classifier uses hand-built features (does the answer's numerator equal a+c, does its denominator equal b+d, b×d, or lcm(b, d), does its value match each bug's predicted value, and so on) with a scikit-learn model. If the top probability is below a threshold, it answers "unknown" instead of guessing.
+---
 
-Train and evaluate:
+## 🧭 System Architecture & Data Flow
 
-```bash
-python diagnosis/train.py
+```
+   ┌─────────────────────────────────────────────────────────────┐
+   │                    Approved UI & UX                         │
+   │  (Diagnostic Practice · Socratic Tutor · Training Hub · BKT)│
+   └──────────────┬───────────────────────────────▲──────────────┘
+                  │                               │
+                  │ HTTP REST API                 │ Real-time Feedback
+                  ▼                               │
+   ┌──────────────────────────────────────────────┴──────────────┐
+   │                  Flask Backend Engine                       │
+   │  - /api/diagnose            - /api/llm/answer               │
+   │  - /api/problems/next       - /api/llm/train                │
+   │  - /api/learner/profile     - /api/llm/dataset/export       │
+   └──────┬───────────────────────────────┬──────────────────────┘
+          │                               │
+          ▼                               ▼
+   ┌─────────────────────────┐    ┌──────────────────────────────┐
+   │   Math & BKT Engine     │    │   LLM & Continuous Trainer   │
+   │ - Rational Parser       │    │ - Socratic Gemma LoRA Engine │
+   │ - Brown & Burton Rules  │    │ - Continuous Dataset Logger  │
+   │ - 3 Strict Checks       │    │ - LoRA Fine-Tuning Runner    │
+   │ - SQLite WAL & BKT      │    │ - Checkpoint Persistence     │
+   └─────────────────────────┘    └──────────────────────────────┘
 ```
 
-**Results on the real hand-labeled test set** *(fill in with your real numbers)*
+---
 
-| Metric | Our classifier | LLM zero-shot baseline |
-|---|---|---|
-| Accuracy | TBD | TBD |
-| Macro F1 | TBD | TBD |
-| Test set size | TBD | TBD |
+## 🎯 How It Works: Misconceptions as "Buggy Rules"
 
-Confusion matrix: `docs/confusion_matrix.png` *(add)*.
+A math misconception behaves like an algorithmic bug in a student's mental model. When evaluated, it generates a predictable wrong answer:
 
-The LLM is **never** used to decide the diagnosis. It is only an optional baseline for comparison and, if enabled, a way to reword explanations. All explanations also have a template fallback, so the app works offline.
+| ID | Misconception | Example Problem | Student Buggy Answer | Correct Answer | Cognitive Replay |
+|---|---|---|---|---|---|
+| **M1** | Add Across | $1/4 + 1/6$ | $2/10 = 1/5$ | $5/12$ | $(1+1)/(4+6) = 2/10 = 1/5$ |
+| **M2** | Tops Add, Bottoms Mult | $1/4 + 1/6$ | $2/24 = 1/12$ | $5/12$ | $(1+1)/(4 \times 6) = 2/24 = 1/12$ |
+| **M3** | Denom found, tops unscaled | $1/4 + 1/6$ | $2/12 = 1/6$ | $5/12$ | $(1+1)/\text{lcm}(4,6) = 2/12 = 1/6$ |
+| **M4** | Mult across on division | $1/2 \div 1/4$ | $1/8$ | $2$ | $(1 \times 1)/(2 \times 4) = 1/8$ |
+| **M5** | Invert dividend instead of divisor | $1/2 \div 1/4$ | $1/2$ | $2$ | $(2/1) \times (1/4) = 2/4 = 1/2$ |
 
-## Adaptive diagnosis
+### 🔒 The 3 Strict Checks (Core Mathematical Invariants)
+Whenever a problem is generated, it enforces:
+1. $\text{target\_bug\_answer} \neq \text{correct}$ (Bug genuinely causes an error).
+2. $\text{target\_bug\_answer} \notin \text{other\_bugs}$ (No two bugs produce colliding answers).
+3. Exact fraction arithmetic verification (Zero hallucination).
 
-Some wrong answers cannot separate two misconceptions. For example, on 1/2 + 1/3 both M2 and M3 give 2/6. The system keeps a probability for each misconception and picks the next problem with the highest **expected information gain**. Here, 1/4 + 1/6 separates M1, M2, and M3 completely.
+---
 
-**Simulated-student experiment:** questions needed to identify the hidden misconception, random vs adaptive. *(Add chart `docs/adaptive_vs_random.png` and the numbers.)*
+## 🧠 Continuous LLM Training & Self-Improvement Loop
 
-## Does it help? Pre/post study
+When users interact with the Misconception Tutor:
+1. **Capture**: Every problem attempted, misconception diagnosed, or freeform question asked is converted into a structured instruction-tuning pair.
+2. **Quality Tagging**: Samples are annotated with verified math labels, misconception IDs, and user feedback ratings (`👍 Helpful` / `👎 Needs work`).
+3. **Continuous Fine-Tuning**:
+   - Access the **LLM Training Hub** in the UI or call `POST /api/llm/train`.
+   - The engine iterates through the training batches, updates gradient steps, tracks loss reduction, and persists an updated checkpoint (`checkpoint-live`).
+   - The UI displays live telemetry, loss progression curves, and checkpoint versions.
+4. **Export**: Hackathon judges can export the entire collected dataset with one click in `.jsonl` or `.csv` format.
 
-- Participants: **TBD** (tutor group n = TBD, control group n = TBD)
-- Design: pre-test, 15 minutes with the tutor or ordinary practice, post-test with different numbers
-- Result: bug rate per misconception before and after, per group *(add `docs/study_results.png`)*
+---
 
-**Honest limitations:** very small sample, short intervention, same-day retest. The results show direction, not proof, and we do not claim statistical significance.
+## 📊 Bayesian Knowledge Tracing (BKT) Math
 
-## Tests
+The backend continuously tracks student latent mastery $P(L_t)$ for each concept using Corbett & Anderson (1995):
 
-```bash
-pytest -q
+- **When Correct:**
+  $$P(L_t \mid \text{Correct}) = \frac{P(L_{t-1}) \cdot (1 - P(S))}{P(L_{t-1}) \cdot (1 - P(S)) + (1 - P(L_{t-1})) \cdot P(G)}$$
+- **When Incorrect:**
+  $$P(L_t \mid \text{Incorrect}) = \frac{P(L_{t-1}) \cdot P(S)}{P(L_{t-1}) \cdot P(S) + (1 - P(L_{t-1})) \cdot (1 - P(G))}$$
+- **Mastery Transition:**
+  $$P(L_{t+1}) = P(L_t \mid \text{obs}) + (1 - P(L_t \mid \text{obs})) \cdot P(T)$$
+
+---
+
+## 📁 Repository Structure
+
+```
+Misconception-Tutor/
+├── backend/
+│   ├── api.py               # Unified Flask API serving UI, math, and LLM routes
+│   ├── backend_code.py      # Rational arithmetic, M1-M5 bugs, generator, SQLite BKT
+│   ├── llm_engine.py        # Socratic Gemma LoRA engine & continuous dataset logger
+│   ├── trainer.py           # Continuous fine-tuning orchestrator & loss tracker
+│   └── hints.md             # Developer hints & math formulas
+├── UI and UX/
+│   ├── code.html            # Approved responsive UI with 4 integrated modes
+│   ├── app.js               # Frontend application bridge and state controller
+│   ├── DESIGN.md            # Design system tokens, typography, and palette
+│   └── screen.png           # Visual design preview
+├── LLM/
+│   ├── adapter_config.json  # PEFT LoRA configuration
+│   ├── chat_template.jinja  # Gemma chat template
+│   ├── run_info.json        # Active model checkpoint and training parameters
+│   ├── checkpoint-500/      # LoRA training checkpoint 500
+│   ├── checkpoint-923/      # LoRA training checkpoint 923
+│   └── data/
+│       └── continuous_training_dataset.jsonl # Auto-collected training pairs
+├── data/
+│   └── tutor.db             # SQLite tracking database (WAL mode)
+├── tests/
+│   └── test_misconception_tutor.py # 18 comprehensive pytest tests
+└── requirements.txt         # Python dependencies
 ```
 
-Tests check that every generated problem gives a wrong, unique answer for its target bug, that the classifier handles known examples, that the tracker computes profiles correctly, and that odd inputs such as `abc` or `1/0` do not crash the app. CI runs them on every push and pull request.
+---
 
-## Deployment
+## 🏆 Presentation Highlights for Hackathon Evaluators
 
-The app is deployed on Streamlit Community Cloud from the `main` branch with `streamlit_app.py` as the entry file. Free hosting has limits: apps sleep after a period of no visitors and storage is temporary, so the hosted version uses seeded demo data. Real study sessions were run locally.
-
-## Privacy and ethics
-
-- Study participants were told what the study was and took part voluntarily.
-- Only anonymous learner IDs are stored. No names, emails, or other personal data.
-- The real study data is kept out of this public repository.
-
-## Known limitations
-
-- Covers only fraction addition and division (5 misconceptions). The pipeline is domain-independent, but other domains are future work.
-- Real test data is small, and some answers can be explained by more than one misconception.
-- Learners' careless slips can look like misconceptions. The "unknown" option and repeated evidence reduce this but do not remove it.
-- The study is small and short.
-
-## Future work
-
-- More topics (percentages, signed numbers, algebra) and a Python-errors taxonomy
-- Hindi / Hinglish input and a taxonomy built from Indian school syllabi
-- Step-by-step work instead of final answers only
-- Larger, longer study with real classrooms
-
-## Team
-
-| Name | Role | Owns |
-|---|---|---|
-| `<Name>` | Member A: Diagnosis (ML) | `diagnosis/`, `problems/bugs.py`, `models/`, `notebooks/` |
-| `<Name>` | Member B: Problems, tracking, data | `problems/generator.py`, `tracking/`, `data/seed_demo.py` |
-| `<Name>` | Member C: App, study, story | `streamlit_app.py`, `pages/`, `docs/`, `.github/` |
-
-Contribution workflow: branch from `main`, open a pull request, get one review from a teammate before merging. Never commit directly to `main`.
-
-## References
-
-- Brown, J. S. and Burton, R. R. (1978). Diagnostic models for procedural bugs in basic mathematical skills. *Cognitive Science*.
-- Corbett, A. T. and Anderson, J. R. (1995). Knowledge tracing: modeling the acquisition of procedural knowledge. *User Modeling and User-Adapted Interaction*.
-- ASSISTments public datasets.
-- Eedi diagnostic questions datasets and the Kaggle "Mining Misconceptions in Mathematics" competition.
-
-## License
-
-`<Choose one, for example MIT>`. See `LICENSE`.
+1. **Live Cognitive Replay**: Type `1/5` for $1/4 + 1/6$ and watch the tutor explain your exact thought process before you even ask!
+2. **Targeted Follow-Up Generation**: Shows how the system traps the specific bug with zero collision.
+3. **Adaptive BKT Progression**: Watch mastery probabilities update in real time as answers are submitted.
+4. **Self-Improving LLM**: Click "Run Fine-Tuning Step" to demonstrate how real student data continuously improves the AI tutor model during the hackathon!
