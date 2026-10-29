@@ -11,12 +11,21 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 ROOT = Path(__file__).resolve().parents[1]
+SRC_DIR = ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from llm.core.types import Message, Role, ToolCall
+from llm.prompt.builder import PromptBuilder, PromptConfig
+from backend.tools import math_tool_executor, tool_registry
+
 LLM_DIR = ROOT / "LLM"
 DATA_DIR = ROOT / "data"
 TRAINING_DATA_DIR = LLM_DIR / "data"
@@ -62,6 +71,13 @@ class LLMEngine:
             dep_error = f"PyTorch/PEFT not installed: {exc}"
 
         dataset_size = self.get_training_sample_count()
+        ecc_provider = os.getenv("LLM_PROVIDER")
+
+        active_mode = "Cognitive Socratic Engine (Fine-tuned Gemma format)"
+        if ecc_provider:
+            active_mode = f"ECC Enterprise Provider ({ecc_provider})"
+        elif self._model:
+            active_mode = "PEFT Adapter (Gemma-4B)"
 
         return {
             "configured": configured,
@@ -72,7 +88,9 @@ class LLMEngine:
             "model": self.base_model,
             "activeCheckpoint": self.active_checkpoint,
             "trainingSamplesCollected": dataset_size,
-            "mode": "PEFT Adapter (Gemma-4B)" if self._model else "Cognitive Socratic Engine (Fine-tuned Gemma format)",
+            "mode": active_mode,
+            "tools": [t.name for t in tool_registry.list_tools()],
+            "ecc_provider": ecc_provider,
             "error": self.error or dep_error,
         }
 
@@ -121,9 +139,54 @@ class LLMEngine:
     ) -> Dict[str, Any]:
         """
         Generates Socratic tutoring response adhering to Bloom 2-Sigma principles.
-        Logs the input/output pair into the continuous training dataset.
+        Utilizes ECC PromptBuilder, tool executor, multi-provider resolver, and continuous learning logger.
         """
-        # Try local PEFT first if loaded
+        system_prompt = (
+            "You are Misconception Tutor, a patient Socratic math tutor. "
+            f"Subject: {subject}. Mode: {mode}. Explain the student's reasoning, identify the first "
+            "divergence, and teach the correction without doing homework for them. "
+            "Use concise Markdown and finish with a Key Takeaway."
+        )
+        builder = PromptBuilder(PromptConfig(system_template=system_prompt, include_tools_in_system=True))
+        normalized_messages = builder.build(
+            messages=[Message(role=Role.USER, content=question)],
+            tools=tool_registry.list_tools(),
+        )
+
+        # 1. Try ECC multi-provider if configured
+        provider_name = os.getenv("LLM_PROVIDER")
+        if provider_name:
+            try:
+                from llm.providers.resolver import get_provider
+                provider = get_provider(provider_name)
+                llm_out = provider.generate(normalized_messages, tools=tool_registry.list_tools())
+                
+                # Execute any tool calls if returned
+                if llm_out.tool_calls:
+                    results = math_tool_executor.execute_all(llm_out.tool_calls)
+                    tool_content = "\n".join(r.content for r in results)
+                    ans_text = f"{llm_out.content}\n\n[Verified Arithmetic via ECC Math Tool]:\n{tool_content}" if llm_out.content else tool_content
+                else:
+                    ans_text = llm_out.content
+
+                sample_id = self.log_training_sample(
+                    subject=subject,
+                    instruction=f"Diagnose the {subject} query using ECC {provider_name} provider in {mode} mode.",
+                    user_input=question,
+                    model_output=ans_text,
+                    learner_id=learner_id,
+                    metadata={"source": f"ecc_{provider_name}", "mode": mode},
+                )
+                return {
+                    "answer": ans_text,
+                    "model": f"ECC {provider_name.capitalize()} Tutor ({self.active_checkpoint})",
+                    "sample_id": sample_id,
+                    "status": "success",
+                }
+            except Exception as e:
+                self.error = f"ECC provider '{provider_name}' error: {e}. Falling back to local engine."
+
+        # 2. Try local PEFT adapter if weights are smudged/loaded
         if self._try_load_peft() and self._model and self._tokenizer:
             try:
                 ans_text = self._generate_peft(subject, question, mode)
@@ -144,7 +207,7 @@ class LLMEngine:
             except Exception as e:
                 self.error = f"PEFT generation error: {e}. Falling back to Cognitive Socratic Engine."
 
-        # High-precision cognitive Socratic generator
+        # 3. High-precision cognitive Socratic generator
         ans_text, metadata = self._generate_cognitive_socratic(subject, question, mode)
         sample_id = self.log_training_sample(
             subject=subject,

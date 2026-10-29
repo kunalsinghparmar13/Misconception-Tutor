@@ -22,12 +22,19 @@ from flask import Flask, Response, jsonify, request, send_from_directory
 from backend import backend_code
 from backend.llm_engine import llm_engine
 from backend.trainer import continuous_trainer
+from backend.security.guard import prompt_guard
+from backend.security.sanitizer import sanitize_input_text, sanitize_math_answer
+from backend.security.middleware import register_security_middleware
+from backend.memory.lifecycle import memory_lifecycle
 
 ROOT = Path(__file__).resolve().parents[1]
 UI_DIR = ROOT / "UI and UX"
 DATA_DIR = ROOT / "data"
 
 app = Flask(__name__)
+
+# Register ECC Enterprise Security Suite (Security Headers & Rate Limiting)
+register_security_middleware(app)
 
 # Initialize database tables on startup
 backend_code.init_db()
@@ -145,13 +152,14 @@ def diagnose_answer():
     6. Logs the interaction into the LLM continuous training dataset.
     """
     data = request.get_json(silent=True) or {}
-    learner_id = str(data.get("learner_id", "student_demo")).strip()
-    session_id = str(data.get("session_id", "sess_01")).strip()
-    user_answer = str(data.get("answer", "")).strip()
-    correct_answer = str(data.get("correct_answer", "")).strip()
-    target_misc = str(data.get("target_misc", "M1_add_across")).strip()
-    problem_text = str(data.get("problem_text", "")).strip()
-    operation = str(data.get("operation", "fraction_add")).strip()
+    raw_answer = str(data.get("answer", "")).strip()
+    user_answer = sanitize_math_answer(raw_answer)
+    learner_id = sanitize_input_text(str(data.get("learner_id", "student_demo")), max_length=64) or "student_demo"
+    session_id = sanitize_input_text(str(data.get("session_id", "sess_01")), max_length=64) or "sess_01"
+    correct_answer = sanitize_math_answer(str(data.get("correct_answer", "")).strip())
+    target_misc = sanitize_input_text(str(data.get("target_misc", "M1_add_across")), max_length=64)
+    problem_text = sanitize_input_text(str(data.get("problem_text", "")), max_length=128)
+    operation = sanitize_input_text(str(data.get("operation", "fraction_add")), max_length=64)
 
     a = int(data.get("a", 1))
     b = int(data.get("b", 4))
@@ -160,6 +168,9 @@ def diagnose_answer():
 
     if not user_answer:
         return jsonify({"error": "Answer cannot be empty."}), 400
+
+    # ECC Memory Lifecycle: pre-observe intent & interaction
+    memory_lifecycle.pre_observe(learner_id, user_answer)
 
     # 1. Exact arithmetic evaluation
     is_correct, student_frac = backend_code.check_answer(user_answer, correct_answer)
@@ -248,6 +259,15 @@ def diagnose_answer():
         },
     )
 
+    # ECC Memory Lifecycle: post-observe update
+    memory_lifecycle.post_observe(
+        learner_id=learner_id,
+        session_id=session_id,
+        target_misc=detected_misc,
+        is_correct=is_correct,
+        response_length=len(replay),
+    )
+
     return jsonify({
         "correct": is_correct,
         "detected_misc": detected_misc,
@@ -308,15 +328,30 @@ def get_teacher_analytics():
 
 @app.post("/api/llm/answer")
 def llm_answer():
-    """Handles freeform Socratic questions and logs training samples."""
+    """Handles freeform Socratic questions with OWASP prompt injection defense and logs training samples."""
     body = request.get_json(silent=True) or {}
-    question = str(body.get("question", "")).strip()
-    if not question:
+    raw_question = str(body.get("question", "")).strip()
+    if not raw_question:
         return jsonify({"error": "Enter a question before sending it."}), 400
 
-    subject = str(body.get("subject", "Mathematics"))
-    mode = str(body.get("mode", "diagnostic"))
-    learner_id = str(body.get("learner_id", "student_demo"))
+    # ECC Input Sanitization & OWASP Prompt Injection Detection
+    question = sanitize_input_text(raw_question)
+    scan_result = prompt_guard.scan(question)
+    if not scan_result.is_safe:
+        return jsonify({
+            "answer": "I am a dedicated Socratic Math Tutor designed to guide you through mathematical problem solving. I cannot process instruction override requests, system prompt inspections, or roleplay escapes. Let's focus on solving fractions and algebra!",
+            "model": "ECC-Security-Guard (OWASP-Blocked)",
+            "status": "refused_injection",
+            "risk_level": scan_result.risk_level,
+            "flagged_pattern": scan_result.flagged_pattern,
+        }), 400
+
+    subject = sanitize_input_text(str(body.get("subject", "Mathematics")), max_length=64)
+    mode = sanitize_input_text(str(body.get("mode", "diagnostic")), max_length=64)
+    learner_id = sanitize_input_text(str(body.get("learner_id", "student_demo")), max_length=64) or "student_demo"
+
+    # ECC Memory Lifecycle: pre-observe intent
+    memory_lifecycle.pre_observe(learner_id, question)
 
     try:
         result = llm_engine.answer_socratic(
@@ -414,6 +449,49 @@ def trigger_training():
 def training_status():
     """Returns real-time fine-tuning progress, loss curves, and active checkpoint."""
     return jsonify(continuous_trainer.get_status())
+
+
+# ==============================================================================
+# SECTION 7: ECC ENTERPRISE SECURITY & MEMORY AUDIT APIS
+# ==============================================================================
+
+@app.get("/api/security/audit")
+def security_audit():
+    """Returns ECC security guard status and threat mitigation metrics."""
+    return jsonify({
+        "status": "active",
+        "owasp_guard": "ECC-OWASP-Prompt-Injection-Guard",
+        "signatures_enforced": [
+            "INSTRUCTION_OVERRIDE",
+            "JAILBREAK_ATTEMPT",
+            "SECRET_EXFILTRATION",
+            "PROMPT_EXTRACTION",
+            "PERSONA_HIJACK",
+            "DAN_OVERRIDE",
+            "XML_SYSTEM_TAG_INJECTION",
+            "LLAMA_TAG_INJECTION",
+        ],
+        "sanitization": {
+            "max_prompt_chars": 4000,
+            "max_answer_chars": 64,
+            "path_traversal_filtering": True,
+            "unicode_null_byte_scrubbing": True,
+        },
+        "rate_limiting": {
+            "enabled": True,
+            "window_seconds": 60,
+            "max_requests_per_window": 120,
+        },
+    })
+
+
+@app.get("/api/memory/sessions")
+def memory_sessions():
+    """Returns ECC active memory sessions and cognitive diagnostic profiles."""
+    return jsonify({
+        "total_active_sessions": len(memory_lifecycle.active_sessions),
+        "sessions": memory_lifecycle.active_sessions,
+    })
 
 
 # ==============================================================================
