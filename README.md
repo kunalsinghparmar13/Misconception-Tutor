@@ -1,3 +1,13 @@
+---
+title: Misconception Tutor
+emoji: 🎓
+colorFrom: indigo
+colorTo: purple
+sdk: docker
+app_port: 8000
+pinned: false
+---
+
 # Misconception Tutor — AI That Teaches
 
 **A Socratic tutor that finds the real cognitive reason you're stuck, and continuously trains itself on real student interactions.**
