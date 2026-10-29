@@ -1,8 +1,8 @@
 {
   "base_model": "unsloth/gemma-4-E4B-it",
-  "latest_checkpoint": "checkpoint-1083",
-  "global_step": 1083,
-  "epochs_completed": 5.98,
-  "final_loss": 0.1264,
-  "timestamp": "2026-10-29T16:06:49.713393"
+  "latest_checkpoint": "checkpoint-1123",
+  "global_step": 1123,
+  "epochs_completed": 6.98,
+  "final_loss": 0.1027,
+  "timestamp": "2026-10-29T17:11:48.493491"
 }

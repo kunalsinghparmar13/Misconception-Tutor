@@ -22,18 +22,46 @@ class PythonCodeDebugger:
     """Intelligent Python compiler, AST static analyzer, and Socratic remediation engine."""
 
     def extract_code(self, text: str) -> str:
-        """Extracts code blocks from markdown (```python ... ```) or returns raw code."""
+        """Extracts code blocks from markdown (```python ... ```) or extracts contiguous code lines."""
         code_block = re.search(r"```(?:python)?\s*\n(.*?)\n```", text, re.DOTALL | re.IGNORECASE)
         if code_block:
             return code_block.group(1).strip()
-        
-        # Check if text looks like Python code
-        lines = text.strip().splitlines()
-        code_keywords = ["def ", "import ", "from ", "class ", "return ", "for ", "while ", "if ", "print(", "print "]
-        if any(any(kw in line for kw in code_keywords) for line in lines):
-            return text.strip()
 
-        return text.strip()
+        clean_text = text.strip()
+        try:
+            ast.parse(clean_text)
+            return clean_text
+        except SyntaxError:
+            pass
+
+        lines = clean_text.splitlines()
+        code_indicators = ("def ", "import ", "from ", "class ", "return ", "for ", "while ", "if ", "elif ", "else:", "print(", "try:", "except", "=", "[", "{")
+
+        # Find first line that looks like Python code
+        start_idx = 0
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            # If line is conversational intro like "Can you fix:", "Here is my code:", skip
+            if stripped.endswith(":") and not any(stripped.startswith(kw) for kw in ("def ", "if ", "for ", "while ", "class ", "try", "except")):
+                continue
+            if stripped.lower().startswith(("can you", "what is", "how do", "why does", "here is", "i have", "please")):
+                continue
+            if any(kw in stripped for kw in code_indicators):
+                start_idx = i
+                break
+
+        # Collect lines from start_idx until conversation trailing prompt
+        collected = []
+        for line in lines[start_idx:]:
+            stripped = line.strip()
+            if stripped.endswith("?") and not any(kw in stripped for kw in code_indicators):
+                break
+            if stripped.lower().startswith(("can you", "what is", "how do", "why does", "please")):
+                break
+            collected.append(line)
+
+        candidate = "\n".join(collected).strip()
+        return candidate if candidate else clean_text
 
     def analyze_and_explain(self, user_input: str) -> Tuple[str, Dict[str, Any]]:
         """

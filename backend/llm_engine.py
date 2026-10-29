@@ -284,24 +284,6 @@ class LLMEngine:
         q_lower = question.lower()
         metadata: Dict[str, Any] = {"topic": "general", "source": "cognitive_socratic_engine"}
 
-        # Case 0: Python Code Compilation & AST Debugging Check
-        has_code_syntax = (
-            "```" in question
-            or "def " in question
-            or "import " in question
-            or "for " in question and ":" in question
-            or "while " in question
-            or "print(" in question
-            or "SyntaxError" in question
-            or "IndentationError" in question
-            or "TypeError" in question
-            or "ZeroDivisionError" in question
-        )
-        is_python_subject = subject.lower() in ["python", "coding", "programming", "computer science", "cs"]
-        if has_code_syntax or is_python_subject:
-            from backend.python_debugger import python_debugger
-            return python_debugger.analyze_and_explain(question)
-
         # Case 1: Fraction addition / division misconceptions
         fraction_pattern = re.search(r"(\d+)\s*/\s*(\d+)\s*([\+\-\*\/÷])\s*(\d+)\s*/\s*(\d+)", question)
         if fraction_pattern or "fraction" in q_lower or any(k in q_lower for k in ["add across", "common denominator", "flip"]):
@@ -407,7 +389,25 @@ class LLMEngine:
             )
             return response, metadata
 
-        # Case 6: General Mathematical Equations, Arithmetic & Percentage Problem Solving
+        # Case 6: Python Code Compilation & AST Debugging Check
+        has_code_syntax = (
+            "```" in question
+            or "def " in question
+            or "import " in question
+            or ("for " in question and ":" in question)
+            or ("while " in question and ":" in question)
+            or "print(" in question
+            or "SyntaxError" in question
+            or "IndentationError" in question
+            or "TypeError" in question
+            or "ZeroDivisionError" in question
+        )
+        is_python_subject = subject.lower() in ["python", "coding", "programming", "computer science", "cs"]
+        if has_code_syntax or is_python_subject:
+            from backend.python_debugger import python_debugger
+            return python_debugger.analyze_and_explain(question)
+
+        # Case 7: General Mathematical Equations, Arithmetic & Percentage Problem Solving
         from backend.general_solver import general_solver
         if general_solver.can_solve(question):
             return general_solver.solve_and_explain(question)

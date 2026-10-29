@@ -529,7 +529,10 @@ def memory_sessions():
 # ==============================================================================
 
 if __name__ == "__main__":
-    host = os.getenv("BACKEND_HOST", "0.0.0.0")
+    host = os.getenv("BACKEND_HOST", "::")
     port = int(os.getenv("PORT", os.getenv("BACKEND_PORT", "8000")))
-    print(f"Starting Misconception Tutor Server on http://{host}:{port} ...")
-    app.run(host=host, port=port, debug=False)
+    print(f"Starting Misconception Tutor Server on http://localhost:{port} (http://127.0.0.1:{port}) ...")
+    try:
+        app.run(host=host, port=port, debug=False)
+    except Exception:
+        app.run(host="0.0.0.0", port=port, debug=False)
