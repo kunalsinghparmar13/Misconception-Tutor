@@ -40,7 +40,39 @@ class ContinuousTrainer:
         self._load_baseline_state()
 
     def _load_baseline_state(self) -> None:
-        """Reads checkpoint-923 trainer state to maintain training continuity."""
+        """Finds and reads the latest checkpoint trainer state to maintain training continuity."""
+        # Find all checkpoint directories
+        checkpoints = []
+        for p in LLM_DIR.glob("checkpoint-*"):
+            if p.is_dir() and (p / "trainer_state.json").exists():
+                try:
+                    step = int(p.name.split("-")[1])
+                    checkpoints.append((step, p / "trainer_state.json"))
+                except ValueError:
+                    pass
+
+        # Sort descending by step
+        checkpoints.sort(key=lambda x: x[0], reverse=True)
+
+        if checkpoints:
+            latest_step, latest_state_file = checkpoints[0]
+            try:
+                with open(latest_state_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    self.current_step = data.get("global_step", latest_step)
+                    self.current_epoch = data.get("epoch", 1.0)
+                    log_hist = data.get("log_history", [])
+                    if log_hist:
+                        self.current_loss = log_hist[-1].get("loss", 0.3629)
+                        self.history = [
+                            {"step": h["step"], "loss": round(h["loss"], 4), "epoch": round(h.get("epoch", 1.0), 3)}
+                            for h in log_hist if "loss" in h
+                        ][-25:]
+                    return
+            except Exception as e:
+                print(f"Warning: Could not read latest checkpoint state {latest_state_file}: {e}")
+
+        # Fallback to checkpoint-923
         ckpt_923_state = LLM_DIR / "checkpoint-923" / "trainer_state.json"
         if ckpt_923_state.exists():
             try:
@@ -51,7 +83,6 @@ class ContinuousTrainer:
                     log_hist = data.get("log_history", [])
                     if log_hist:
                         self.current_loss = log_hist[-1].get("loss", 0.3629)
-                        # Keep last 15 historical points for plotting
                         self.history = [
                             {"step": h["step"], "loss": round(h["loss"], 4), "epoch": round(h.get("epoch", 1.0), 3)}
                             for h in log_hist if "loss" in h

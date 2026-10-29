@@ -445,6 +445,36 @@ def trigger_training():
     return jsonify(result)
 
 
+@app.post("/api/python/debug")
+def debug_python_code():
+    """Compiles and debugs Python code, returning AST analysis, runtime errors, and Socratic fix."""
+    body = request.get_json(silent=True) or {}
+    code = str(body.get("code", "")).strip()
+    if not code:
+        return jsonify({"error": "No Python code provided."}), 400
+
+    from backend.python_debugger import python_debugger
+    explanation, meta = python_debugger.analyze_and_explain(code)
+
+    # Log to continuous training dataset
+    sample_id = llm_engine.log_training_sample(
+        subject="Python",
+        instruction="Debug and explain the provided Python code.",
+        user_input=code,
+        model_output=explanation,
+        learner_id=str(body.get("learner_id", "student_demo")),
+        misconception=meta.get("error_category", "python_debugging"),
+        metadata=meta,
+    )
+
+    return jsonify({
+        "status": "success",
+        "explanation": explanation,
+        "metadata": meta,
+        "sample_id": sample_id,
+    })
+
+
 @app.get("/api/llm/train/status")
 def training_status():
     """Returns real-time fine-tuning progress, loss curves, and active checkpoint."""

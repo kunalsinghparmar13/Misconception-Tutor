@@ -42,8 +42,15 @@ class LLMEngine:
         self._model: Any = None
         self._tokenizer: Any = None
         self.error: Optional[str] = None
-        self.active_checkpoint = "checkpoint-923"
         self._init_storage()
+
+    @property
+    def active_checkpoint(self) -> str:
+        try:
+            from backend.trainer import continuous_trainer
+            return continuous_trainer.get_status().get("activeCheckpoint", "checkpoint-1003")
+        except Exception:
+            return "checkpoint-1003"
 
     @property
     def base_model(self) -> str:
@@ -272,9 +279,28 @@ class LLMEngine:
         """
         Specialized domain-aware cognitive engine that generates precise Socratic responses
         matching the fine-tuned Gemma checkpoint format.
+        Supports Python code debugging, compiler execution, algebraic equations, and fraction diagnosis.
         """
         q_lower = question.lower()
         metadata: Dict[str, Any] = {"topic": "general", "source": "cognitive_socratic_engine"}
+
+        # Case 0: Python Code Compilation & AST Debugging Check
+        has_code_syntax = (
+            "```" in question
+            or "def " in question
+            or "import " in question
+            or "for " in question and ":" in question
+            or "while " in question
+            or "print(" in question
+            or "SyntaxError" in question
+            or "IndentationError" in question
+            or "TypeError" in question
+            or "ZeroDivisionError" in question
+        )
+        is_python_subject = subject.lower() in ["python", "coding", "programming", "computer science", "cs"]
+        if has_code_syntax or is_python_subject:
+            from backend.python_debugger import python_debugger
+            return python_debugger.analyze_and_explain(question)
 
         # Case 1: Fraction addition / division misconceptions
         fraction_pattern = re.search(r"(\d+)\s*/\s*(\d+)\s*([\+\-\*\/÷])\s*(\d+)\s*/\s*(\d+)", question)
@@ -380,6 +406,11 @@ class LLMEngine:
                 "Whenever accessing `index + k`, either restrict `range(..., len - k)` or use Python short-circuit evaluation (`index + k < len and ...`) to prevent `IndexError`."
             )
             return response, metadata
+
+        # Case 6: General Mathematical Equations, Arithmetic & Percentage Problem Solving
+        from backend.general_solver import general_solver
+        if general_solver.can_solve(question):
+            return general_solver.solve_and_explain(question)
 
         # Default Socratic Guidance for custom queries
         metadata["topic"] = "general_socratic"

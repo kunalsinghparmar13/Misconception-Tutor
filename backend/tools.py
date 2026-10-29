@@ -105,5 +105,30 @@ def diagnose_buggy_fraction(student_answer: str, a: int, b: int, c: int, d: int,
 tool_registry.register(DIAGNOSE_BUG_DEF, diagnose_buggy_fraction)
 
 
+# ------------------------------------------------------------------------------
+# Tool 3: Python Code Compiler & Safe Execution
+# ------------------------------------------------------------------------------
+RUN_PYTHON_DEF = ToolDefinition(
+    name="compile_and_run_python",
+    description="Compiles and executes Python code in a safe sandbox, capturing output or syntax/runtime errors.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "code": {"type": "string", "description": "Python source code to compile and run"},
+        },
+        "required": ["code"],
+    },
+)
+
+
+def compile_and_run_python(code: str) -> str:
+    from backend.python_debugger import python_debugger
+    explanation, metadata = python_debugger.analyze_and_explain(code)
+    return explanation
+
+
+tool_registry.register(RUN_PYTHON_DEF, compile_and_run_python)
+
+
 # Global tool executor
 math_tool_executor = ToolExecutor(tool_registry)
