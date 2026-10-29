@@ -48,46 +48,79 @@ This application seamlessly integrates all three core pillars into a single, coh
 
 ---
 
-## 🚀 Quick Start (Run the Web Application)
+## 🚀 Quick Start & Deployment Guide (For Team Members)
 
-### 1. Prerequisites
-- Python 3.9+ (Python 3.11 recommended)
-- Git
+### Option A: Direct Local Setup (Fastest for Development)
 
-### 2. Setup Environment
 ```bash
+# 1. Clone the repository
 git clone https://github.com/kunalsinghparmar13/Misconception-Tutor.git
 cd Misconception-Tutor
 
-# Create virtual environment
+# 2. Create and activate a virtual environment
 python3 -m venv .venv
-source .venv/bin/activate   # On Windows: .venv\Scripts\activate
+source .venv/bin/activate          # On Windows: .venv\Scripts\activate
 
-# Install dependencies
+# 3. Install dependencies
 pip install -r requirements.txt
-```
 
-### 3. Launch the Server
-```bash
-PYTHONPATH=. python -m backend.api
+# 4. Launch the web application
+PYTHONPATH=src:. python backend/api.py
 ```
-
-Open your browser to:
-```
-http://localhost:8000
-```
+Open **`http://localhost:8000`** in your browser.
 
 ---
 
-## 🧪 Automated Test Suite
+### Option B: Instant Worldwide Public HTTPS URL (Cloudflare Quick Tunnel — 100% Free)
 
-Run the full end-to-end verification suite covering rational arithmetic, buggy rules, problem generator invariants, BKT updates, Socratic LLM output, and Flask API endpoints:
+No domain, no port forwarding, and no credit card required:
+```bash
+# Terminal 1: Start the backend server
+PYTHONPATH=src:. python backend/api.py
+
+# Terminal 2: Expose via free Cloudflare Tunnel
+# Mac: brew install cloudflared
+# Windows: winget install --id Cloudflare.cloudflared
+# Linux: sudo apt-get install cloudflared
+cloudflared tunnel --url http://127.0.0.1:8000
+```
+It immediately gives a worldwide public HTTPS link (e.g. `https://xxxx.trycloudflare.com`) accessible from any laptop, phone, or evaluator device.
+
+---
+
+### Option C: 24/7 Free Cloud Deployment on Hugging Face Spaces (Zero Credit Card)
+
+1. Create a free account at [Hugging Face](https://huggingface.co).
+2. Go to [huggingface.co/new-space](https://huggingface.co/new-space).
+3. Set **Space Name**: `misconception-tutor`
+4. Set **License**: `mit` or `apache-2.0`
+5. Select **Space SDK**: **Docker** (Blank)
+6. Choose **Public** (Free 2 vCPU · 16 GB RAM).
+7. Push this repository to Hugging Face:
+   ```bash
+   git remote add space https://huggingface.co/spaces/<YOUR_HF_USERNAME>/misconception-tutor
+   git push space main
+   ```
+   *The pre-configured `Dockerfile` and `README.md` metadata will automatically build and serve the application 24/7 with a persistent public URL!*
+
+---
+
+### Option D: Docker & Docker Compose
 
 ```bash
-PYTHONPATH=. pytest -v
+docker compose up --build
 ```
+The container builds in seconds and binds to `http://localhost:8000`.
 
-All 18 comprehensive tests run in `< 0.2s` and validate the mathematical and behavioral guarantees.
+---
+
+## 🧪 Automated Test Suite (79 Tests Passing)
+
+Run the full end-to-end verification suite:
+```bash
+PYTHONPATH=src:. pytest -v
+```
+All **79 tests** pass in `< 0.2s`, verifying rational arithmetic, Brown & Burton buggy rules, Bayesian Knowledge Tracing, Python AST compilation, general problem solving, and OWASP security filters.
 
 ---
 
@@ -173,9 +206,18 @@ Misconception-Tutor/
 ├── backend/
 │   ├── api.py               # Unified Flask API serving UI, math, and LLM routes
 │   ├── backend_code.py      # Rational arithmetic, M1-M5 bugs, generator, SQLite BKT
-│   ├── llm_engine.py        # Socratic Gemma LoRA engine & continuous dataset logger
+│   ├── python_debugger.py   # Python AST compiler, error locator & Socratic fixer
+│   ├── general_solver.py    # Arbitrary linear/quadratic equations & word problem solver
+│   ├── llm_engine.py        # Socratic dual-mode engine & continuous dataset logger
 │   ├── trainer.py           # Continuous fine-tuning orchestrator & loss tracker
-│   └── hints.md             # Developer hints & math formulas
+│   ├── tools.py             # Agentic math and code execution tools
+│   ├── security/            # ECC OWASP Prompt Injection Guard & Input Sanitizers
+│   │   ├── guard.py         # 8 OWASP injection signatures & jailbreak detector
+│   │   ├── sanitizer.py     # Path traversal, null byte & bounded payload sanitizer
+│   │   └── middleware.py    # Security HTTP headers & IP rate limiting (120 req/min)
+│   └── memory/
+│       └── lifecycle.py     # Student session memory & cognitive intent tracking
+├── src/llm/                 # ECC Multi-Provider LLM Harness (Ollama, Claude, OpenAI)
 ├── UI and UX/
 │   ├── code.html            # Approved responsive UI with 4 integrated modes
 │   ├── app.js               # Frontend application bridge and state controller
@@ -183,17 +225,24 @@ Misconception-Tutor/
 │   └── screen.png           # Visual design preview
 ├── LLM/
 │   ├── adapter_config.json  # PEFT LoRA configuration
-│   ├── chat_template.jinja  # Gemma chat template
-│   ├── run_info.json        # Active model checkpoint and training parameters
-│   ├── checkpoint-500/      # LoRA training checkpoint 500
-│   ├── checkpoint-923/      # LoRA training checkpoint 923
+│   ├── checkpoint-1083/     # Latest fine-tuned checkpoint (Loss: 0.1710)
+│   ├── checkpoint-1043/     # Fine-tuning checkpoint 1043
+│   ├── checkpoint-1003/     # Fine-tuning checkpoint 1003
+│   ├── checkpoint-923/      # Baseline checkpoint 923
 │   └── data/
-│       └── continuous_training_dataset.jsonl # Auto-collected training pairs
-├── data/
-│   └── tutor.db             # SQLite tracking database (WAL mode)
+│       └── continuous_training_dataset.jsonl # Auto-collected training dataset
 ├── tests/
-│   └── test_misconception_tutor.py # 18 comprehensive pytest tests
-└── requirements.txt         # Python dependencies
+│   ├── test_misconception_tutor.py # Math engine & BKT tests
+│   ├── test_ecc_enterprise.py      # OWASP security, rate limiter, headers
+│   ├── test_python_and_solver.py   # Python debugger & equation solver tests
+│   ├── test_builder.py             # ECC PromptBuilder unit tests
+│   ├── test_executor.py            # ECC tool execution unit tests
+│   └── test_types.py               # Core typing & provider unit tests
+├── Dockerfile               # Production container with zero-credit-card HF Spaces support
+├── docker-compose.yml       # Local single-command container runtime
+├── render.yaml              # 1-click cloud deployment blueprint
+├── requirements.txt         # Production Python dependencies
+└── SECURITY.md              # OWASP for Agents & LLMs Security Policy
 ```
 
 ---
