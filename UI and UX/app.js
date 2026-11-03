@@ -119,12 +119,35 @@
               misconception: question.target_misconception,
               answer: answer.value,
               correct_answer: question.correct_answer,
+              reference_code: question.code,
             }),
           });
           const payload = await response.json();
           if (!response.ok) throw new Error(payload.error || 'Unable to grade practice');
-          result.textContent = payload.correct ? 'Correct — this misconception is getting weaker.' : 'Not yet — review the tutor explanation and try another one.';
+          result.textContent = payload.correct ? 'Correct — this misconception is getting weaker.' : 'Not yet — compare your answer with the solution below.';
           result.className = `font-body-sm text-body-sm ${payload.correct ? 'text-on-tertiary-container' : 'text-error'}`;
+          const solution = document.createElement('div');
+          solution.className = 'mt-3 rounded-lg bg-surface-container-lowest p-3 text-on-surface';
+          const heading = document.createElement('p');
+          heading.className = 'font-label-md text-label-md mb-2';
+          heading.textContent = question.type === 'code' ? 'Correct code and explanation' : 'Correct answer and explanation';
+          solution.appendChild(heading);
+          if (question.type === 'code') {
+            const correctCode = document.createElement('pre');
+            correctCode.className = 'whitespace-pre-wrap overflow-x-auto font-code-block text-code-block mb-2';
+            correctCode.textContent = payload.correct_code || question.correct_code || 'No reference solution available.';
+            solution.appendChild(correctCode);
+          } else {
+            const correctAnswer = document.createElement('p');
+            correctAnswer.className = 'font-body-md text-body-md mb-2';
+            correctAnswer.textContent = `Answer: ${payload.correct_answer || question.correct_answer}`;
+            solution.appendChild(correctAnswer);
+          }
+          const explanation = document.createElement('p');
+          explanation.className = 'font-body-sm text-body-sm text-on-surface-variant';
+          explanation.textContent = payload.explanation || question.explanation || 'Review the tutor response and apply the same correction.';
+          solution.appendChild(explanation);
+          card.appendChild(solution);
         } catch (error) {
           result.textContent = `Could not grade: ${error.message}`;
           result.className = 'font-body-sm text-body-sm text-error';

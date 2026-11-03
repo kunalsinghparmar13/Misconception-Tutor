@@ -68,6 +68,60 @@ CODE_PRACTICE: Dict[str, List[Dict[str, str]]] = {
 }
 
 
+def _code_solution(code: str, misconception: str) -> tuple[str, str]:
+    """Return a corrected answer and a short explanation for a code drill."""
+    if misconception == "SyntaxError":
+        fixed = re.sub(
+            r"(?m)^(\s*(?:def|if|for|while|class|try|except|else|elif|finally)\b[^\n:]*)(?=\n|$)",
+            r"\1:",
+            code,
+        )
+        return fixed, "Python block headers must end with a colon before their indented body."
+    if misconception == "IndentationError":
+        lines = code.splitlines()
+        fixed = []
+        block_indent = 0
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                fixed.append("")
+                continue
+            if stripped.startswith(("return ", "print(", "value =", "count +=", "result =")):
+                block_indent = max(block_indent, 4)
+                fixed.append(" " * block_indent + stripped)
+            elif stripped.startswith(("except ", "else:", "elif ")):
+                block_indent = 0
+                fixed.append(stripped)
+            else:
+                fixed.append(line.rstrip())
+        return "\n".join(fixed), "Statements inside a function, loop, or conditional must use the same indentation level."
+    if misconception == "Equality vs Assignment Confusion":
+        return re.sub(r"(?m)^(\s*if .*?) = ", r"\1 == ", code), "Use == to compare values; a single = assigns a value and is not valid in a condition."
+    if misconception == "MutableDefaultArgument":
+        fixed = re.sub(r"\b(items|counts|bucket|values|history|options)=({}|\[\])", r"\1=None", code)
+        parameter = re.search(r"\b(items|counts|bucket|values|history|options)=None", fixed)
+        if parameter:
+            name = parameter.group(1)
+            lines = fixed.splitlines()
+            insert_at = 1
+            fixed = "\n".join(lines[:insert_at] + [f"    {name} = {name} or " + ("{}" if name in {"counts", "options"} else "[]")] + lines[insert_at:])
+        return fixed, "Mutable default objects are shared by every call; use None and create a fresh list or dictionary inside the function."
+    if misconception == "InPlaceMethodAssignment":
+        fixed = re.sub(r"(\b\w+)\s*=\s*\1\.(sort|reverse)\(\)", r"\1.\2()", code)
+        fixed = re.sub(r"(\b\w+)\s*=\s*(\w+)\.sort\(\)", r"\2.sort()", fixed)
+        return fixed, "sort() and reverse() modify a list in place and return None; call them without assigning their return value."
+    if misconception == "IndexOutOfBounds":
+        fixed = re.sub(r"range\(len\(([^)]+)\)\)", r"range(len(\1) - 1)", code)
+        return fixed, "An index plus one is valid only before the final element, so stop the loop one position earlier."
+    fixed = code.replace("denominator = 0", "denominator = 1")
+    fixed = fixed.replace("count = 0", "count = 1")
+    fixed = re.sub(r"'Items: '\s*\+\s*count", "f'Items: {count}'", fixed)
+    fixed = fixed.replace("items = []\nfirst = items[0]", "items = []\nfirst = items[0] if items else None")
+    fixed = fixed.replace("text = 'abc'\nnumber = int(text)", "text = 'abc'\nnumber = int(text) if text.isdigit() else 0")
+    fixed = re.sub(r"price = '10'\ntax = 2\ntotal = price \+ tax", "price = 10\ntax = 2\ntotal = price + tax", fixed)
+    return fixed, "Validate values and convert compatible types before performing an operation that can raise a runtime error."
+
+
 def classify_misconception(subject: str, question: str, metadata: Dict[str, Any] | None = None) -> str:
     """Return a stable misconception label for practice generation."""
     metadata = metadata or {}
@@ -105,6 +159,8 @@ def generate_practice_set(subject: str, misconception: str, count: int = 6) -> D
                 "prompt": item["prompt"],
                 "code": item["code"],
                 "target_misconception": misconception,
+                "correct_code": _code_solution(item["code"], misconception)[0],
+                "explanation": _code_solution(item["code"], misconception)[1],
             }
             for idx, item in enumerate(pool[:count])
         ]

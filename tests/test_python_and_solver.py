@@ -195,3 +195,30 @@ def test_api_practice_submit_and_progress(client: FlaskClient):
     record = progress.get_json()["records"][0]
     assert record["attempts"] == 1
     assert record["accuracy"] == 1.0
+
+
+def test_code_practice_contains_solution_and_explanation(client: FlaskClient):
+    response = client.post("/api/llm/answer", json={
+        "subject": "Python",
+        "question": "def greet(name)\n    return name",
+    })
+    assert response.status_code == 200
+    question = response.get_json()["practice_set"]["questions"][0]
+    assert question["correct_code"]
+    assert question["explanation"]
+
+
+def test_code_practice_submit_returns_solution(client: FlaskClient):
+    response = client.post("/api/practice/submit", json={
+        "learner_id": "solution_student",
+        "session_id": "solution_session",
+        "practice_id": "code_SyntaxError_1",
+        "subject": "Python",
+        "misconception": "SyntaxError",
+        "answer": "def greet(name):\n    return f'Hello {name}'",
+        "reference_code": "def greet(name)\n    return f'Hello {name}'",
+    })
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["correct_code"]
+    assert data["explanation"]

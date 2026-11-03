@@ -404,11 +404,25 @@ def submit_practice_attempt():
         from backend.python_debugger import python_debugger
         _, metadata = python_debugger.analyze_and_explain(answer)
         correct = metadata.get("status") == "code_executes_cleanly"
-        details = {"metadata": metadata}
+        from backend.practice import _code_solution
+        reference_code = str(body.get("reference_code", ""))
+        correct_code, explanation = _code_solution(reference_code, misconception)
+        details = {
+            "metadata": metadata,
+            "correct_code": correct_code,
+            "explanation": explanation,
+        }
     else:
         correct_answer = sanitize_math_answer(str(body.get("correct_answer", "")))
         correct, parsed = backend_code.check_answer(sanitize_math_answer(answer), correct_answer)
-        details = {"student_parsed": backend_code.format_fraction(parsed) if parsed else answer}
+        details = {
+            "student_parsed": backend_code.format_fraction(parsed) if parsed else answer,
+            "correct_answer": correct_answer,
+            "explanation": (
+                "Find a common denominator, scale each numerator by the same factor, "
+                "then add the numerators and reduce the fraction."
+            ),
+        }
 
     backend_code.log_practice_attempt(
         learner_id=learner_id,
