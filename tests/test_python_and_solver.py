@@ -145,3 +145,53 @@ def test_api_llm_answer_solves_arbitrary_math(client: FlaskClient):
     data = res.get_json()
     assert "Linear Equation" in data["answer"]
     assert "6" in data["answer"]
+
+
+def test_api_llm_answer_returns_targeted_math_practice(client: FlaskClient):
+    res = client.post("/api/llm/answer", json={
+        "question": "Why is 1/4 + 1/6 = 1/5 wrong?",
+        "subject": "Mathematics",
+        "learner_id": "practice_math_student",
+    })
+    assert res.status_code == 200
+    data = res.get_json()
+    assert data["misconception"] == "M1_add_across"
+    assert data["practice_set"]["subject"] == "Mathematics"
+    assert data["practice_set"]["count"] == 6
+    assert all(item["type"] == "math" for item in data["practice_set"]["questions"])
+
+
+def test_api_llm_answer_returns_targeted_code_practice(client: FlaskClient):
+    res = client.post("/api/llm/answer", json={
+        "question": "Why does this Python function fail?\n```python\ndef total(values)\n    return sum(values)\n```",
+        "subject": "Python",
+        "learner_id": "practice_code_student",
+    })
+    assert res.status_code == 200
+    data = res.get_json()
+    assert data["misconception"] == "SyntaxError"
+    assert data["practice_set"]["subject"] == "Python"
+    assert data["practice_set"]["count"] == 6
+    assert all(item["type"] == "code" for item in data["practice_set"]["questions"])
+
+
+def test_api_practice_submit_and_progress(client: FlaskClient):
+    import time
+    learner_id = f"practice_submit_student_{int(time.time() * 1000)}"
+    res = client.post("/api/practice/submit", json={
+        "learner_id": learner_id,
+        "session_id": "practice_session_1",
+        "practice_id": "math_M1_add_across_1",
+        "subject": "Mathematics",
+        "misconception": "M1_add_across",
+        "answer": "5/12",
+        "correct_answer": "5/12",
+    })
+    assert res.status_code == 200
+    assert res.get_json()["correct"] is True
+
+    progress = client.get(f"/api/practice/progress?learner_id={learner_id}")
+    assert progress.status_code == 200
+    record = progress.get_json()["records"][0]
+    assert record["attempts"] == 1
+    assert record["accuracy"] == 1.0

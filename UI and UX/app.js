@@ -17,7 +17,8 @@
     '<span class="font-label-sm text-label-sm uppercase tracking-wider text-outline">Tutor response</span>' +
     '<span id="llm-model" class="font-label-sm text-label-sm text-outline"></span>' +
     '</div>' +
-    '<pre id="llm-answer" class="whitespace-pre-wrap font-body-md text-body-md text-on-surface"></pre>';
+    '<pre id="llm-answer" class="whitespace-pre-wrap font-body-md text-body-md text-on-surface"></pre>' +
+    '<div id="targeted-practice" class="mt-6"></div>';
   document.querySelector('main > div')?.prepend(response);
 
   async function refreshBackendStatus() {
@@ -48,6 +49,97 @@
     response.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
+  function renderPracticeSet(practiceSet) {
+    const container = document.getElementById('targeted-practice');
+    if (!container || !practiceSet?.questions?.length) return;
+    container.replaceChildren();
+
+    const title = document.createElement('h2');
+    title.className = 'font-headline-md text-headline-md text-on-surface mb-1';
+    title.textContent = `6 targeted ${practiceSet.subject} practice questions`;
+    container.appendChild(title);
+
+    const subtitle = document.createElement('p');
+    subtitle.className = 'font-body-sm text-body-sm text-on-surface-variant mb-4';
+    subtitle.textContent = `These questions focus on: ${practiceSet.misconception}. Submit each answer to measure improvement.`;
+    container.appendChild(subtitle);
+
+    const list = document.createElement('div');
+    list.className = 'space-y-3';
+    practiceSet.questions.forEach((question, index) => {
+      const card = document.createElement('div');
+      card.className = 'rounded-xl bg-surface-container-low p-4';
+
+      const label = document.createElement('div');
+      label.className = 'font-label-sm text-label-sm uppercase tracking-wider text-outline mb-2';
+      label.textContent = `Practice ${index + 1}`;
+      card.appendChild(label);
+
+      const prompt = document.createElement('p');
+      prompt.className = 'font-body-md text-body-md text-on-surface mb-2';
+      prompt.textContent = question.prompt;
+      card.appendChild(prompt);
+
+      if (question.type === 'code') {
+        const code = document.createElement('pre');
+        code.className = 'whitespace-pre-wrap rounded-lg bg-surface-container-lowest p-3 font-code-block text-code-block text-on-surface mb-3 overflow-x-auto';
+        code.textContent = question.code;
+        card.appendChild(code);
+      }
+
+      const answer = document.createElement(question.type === 'code' ? 'textarea' : 'input');
+      answer.className = 'w-full rounded-lg bg-surface-container-lowest px-3 py-2 font-code-block text-code-block text-on-surface ring-1 ring-outline-variant/50 focus:ring-2 focus:ring-primary';
+      answer.placeholder = question.type === 'code' ? 'Paste your corrected Python code here...' : 'Type your answer, for example 5/12';
+      if (question.type === 'code') {
+        answer.rows = 4;
+      } else {
+        answer.type = 'text';
+      }
+      card.appendChild(answer);
+
+      const actionRow = document.createElement('div');
+      actionRow.className = 'mt-3 flex items-center gap-3';
+      const submit = document.createElement('button');
+      submit.className = 'rounded-full bg-primary px-4 py-2 font-label-md text-label-md text-on-primary';
+      submit.textContent = 'Check answer';
+      const result = document.createElement('span');
+      result.className = 'font-body-sm text-body-sm text-on-surface-variant';
+      submit.addEventListener('click', async () => {
+        if (!answer.value.trim()) return;
+        submit.disabled = true;
+        try {
+          const response = await fetch('/api/practice/submit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              learner_id: localStorage.getItem('learner_id') || 'student_demo',
+              session_id: `practice_${Date.now()}`,
+              practice_id: question.id,
+              subject: question.subject,
+              misconception: question.target_misconception,
+              answer: answer.value,
+              correct_answer: question.correct_answer,
+            }),
+          });
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.error || 'Unable to grade practice');
+          result.textContent = payload.correct ? 'Correct — this misconception is getting weaker.' : 'Not yet — review the tutor explanation and try another one.';
+          result.className = `font-body-sm text-body-sm ${payload.correct ? 'text-on-tertiary-container' : 'text-error'}`;
+        } catch (error) {
+          result.textContent = `Could not grade: ${error.message}`;
+          result.className = 'font-body-sm text-body-sm text-error';
+        } finally {
+          submit.disabled = false;
+        }
+      });
+      actionRow.appendChild(submit);
+      actionRow.appendChild(result);
+      card.appendChild(actionRow);
+      list.appendChild(card);
+    });
+    container.appendChild(list);
+  }
+
   function updateCounter() {
     const count = textarea.value.length;
     if (counter) counter.textContent = `${count} / 4000`;
@@ -76,6 +168,7 @@
       const payload = await result.json();
       if (!result.ok) throw new Error(payload.error || `Backend error (${result.status})`);
       showResponse(payload.answer, payload.model);
+      renderPracticeSet(payload.practice_set);
     } catch (error) {
       showResponse(`Service unavailable: ${error.message}`, 'LLM backend');
     } finally {

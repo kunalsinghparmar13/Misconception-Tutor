@@ -16,6 +16,16 @@ pinned: false
 
 ---
 
+## 🎯 Targeted Practice Loop
+
+After each diagnosis, the tutor creates **six targeted practice questions** for the same
+subject: math mistakes produce exact-fraction questions, while Python mistakes produce
+repairable code snippets. Each submitted practice answer is stored by learner and
+misconception so the profile can show whether that error type is improving across sessions.
+
+The loop is available through `/api/llm/answer` (`practice_set`), `/api/practice/submit`,
+and `/api/practice/progress`.
+
 ## 🌟 Overview: Integrating All Three Pillars
 
 This application seamlessly integrates all three core pillars into a single, cohesive web application:
@@ -65,9 +75,32 @@ source .venv/bin/activate          # On Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
 # 4. Launch the web application
-PYTHONPATH=src:. python backend/api.py
+PYTHONPATH=src:. python3 -m backend.api
 ```
 Open **`http://localhost:8000`** in your browser.
+
+The tutor uses the Hugging Face PEFT adapter
+`kunalsinghparmar/misconception-tutor-gemma4-e4b` by default. To enable local
+model inference instead of the deterministic fallback, install the model runtime
+on a CUDA-capable machine:
+
+```bash
+.venv/bin/python -m pip install -r requirements-gpu.txt
+```
+
+For an offline local adapter, set `LLM_ADAPTER_PATH=LLM`. To use another
+Hugging Face adapter, set `LLM_ADAPTER_ID=owner/repository`.
+
+The training notebook is [`LLM/tutor-project.ipynb`](LLM/tutor-project.ipynb).
+It fine-tunes the Gemma tutor on MathDial and coding data and exports an
+adapter directory named `gemma4-e4b-math-code-lora`. If that directory is
+placed under `LLM/`, the app automatically prefers it over the Hugging Face
+adapter. You can also point to another notebook export with
+`LLM_NOTEBOOK_ADAPTER_PATH=/path/to/adapter`.
+
+The published adapter uses a 4-bit `bitsandbytes` base model and requires a
+GPU with enough memory for local inference. On CPU-only macOS, the app remains
+available through its verified Cognitive Socratic fallback rather than failing.
 
 ---
 
