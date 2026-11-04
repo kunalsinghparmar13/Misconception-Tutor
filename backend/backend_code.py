@@ -22,13 +22,12 @@ This single file contains the entire backend implementation for Member B:
 import os
 import re
 import csv
-import math
 import random
 import sqlite3
 from datetime import datetime
 from functools import lru_cache
 from fractions import Fraction
-from math import lcm, gcd
+from math import lcm
 from typing import Dict, List, Tuple, Optional, Any, Callable
 from backend.db_persistence import commit_sqlite_volume
 

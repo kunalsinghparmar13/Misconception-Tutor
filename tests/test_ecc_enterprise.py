@@ -20,7 +20,7 @@ from backend.api import app
 from backend.security.guard import prompt_guard
 from backend.security.sanitizer import sanitize_input_text, sanitize_math_answer
 from backend.memory.lifecycle import memory_lifecycle
-from backend.tools import math_tool_executor, calculate_fraction_op, diagnose_buggy_fraction
+from backend.tools import calculate_fraction_op, diagnose_buggy_fraction
 from llm.prompt.builder import PromptBuilder, PromptConfig
 from llm.core.types import Message, Role
 

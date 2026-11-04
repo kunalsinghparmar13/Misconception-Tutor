@@ -7,7 +7,6 @@ Protects against Path Traversal, Denial-of-Service, and Unbounded Payloads.
 
 from __future__ import annotations
 
-import html
 import re
 from typing import Optional
 

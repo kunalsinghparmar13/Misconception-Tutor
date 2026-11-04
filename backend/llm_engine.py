@@ -22,9 +22,9 @@ SRC_DIR = ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from llm.core.types import Message, Role, ToolCall
-from llm.prompt.builder import PromptBuilder, PromptConfig
-from backend.tools import math_tool_executor, tool_registry
+from llm.core.types import Message, Role  # noqa: E402
+from llm.prompt.builder import PromptBuilder, PromptConfig  # noqa: E402
+from backend.tools import math_tool_executor, tool_registry  # noqa: E402
 
 LLM_DIR = ROOT / "LLM"
 DATA_DIR = ROOT / "data"
@@ -79,7 +79,9 @@ class LLMEngine:
 
     def status(self) -> Dict[str, Any]:
         """Returns the readiness status of the LLM system."""
-        configured = (self.adapter_dir / "adapter_config.json").exists() or bool(self.adapter_source)
+        configured = (self.adapter_dir / "adapter_config.json").exists() or bool(
+            self.adapter_source
+        )
         dependencies_installed = False
         dep_error = None
         try:
@@ -101,7 +103,7 @@ class LLMEngine:
             active_mode = "PEFT Adapter (Gemma-4B)"
 
         return {
-                "configured": bool(self.adapter_source),
+                "configured": configured,
                 "dependenciesInstalled": dependencies_installed,
                 "loaded": self._model is not None,
                 "available": self._model is not None,
@@ -110,11 +112,7 @@ class LLMEngine:
                 "baseModel": self.base_model,
                 "activeCheckpoint": self.active_checkpoint,
                 "trainingSamplesCollected": dataset_size,
-                "mode": (
-                    "Fine-tuned Gemma adapter"
-                    if self._model is not None
-                    else "Model not loaded"
-                    ),
+                "mode": active_mode,
                 "tools": [t.name for t in tool_registry.list_tools()],
                 "ecc_provider": ecc_provider,
                 "error": self.error or dep_error,
@@ -135,7 +133,7 @@ class LLMEngine:
             hf_token = os.getenv("HF_TOKEN")
 
             try:
-                import torch
+                import torch  # noqa: F401
                 from peft import AutoPeftModelForCausalLM, PeftConfig
                 from transformers import AutoTokenizer
 

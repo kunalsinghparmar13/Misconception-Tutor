@@ -7,7 +7,6 @@ and all Flask API endpoints.
 ================================================================================
 """
 
-import json
 from fractions import Fraction
 import pytest
 from backend import backend_code

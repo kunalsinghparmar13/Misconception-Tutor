@@ -11,7 +11,7 @@ from __future__ import annotations
 import math
 import re
 from fractions import Fraction
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Tuple
 
 
 class GeneralProblemSolver:

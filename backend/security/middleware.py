@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Dict, List, Tuple
-from flask import Flask, Request, Response, jsonify, request
+from typing import Dict, List
+from flask import Flask, Response, jsonify, request
 
 
 class IPRateLimiter:

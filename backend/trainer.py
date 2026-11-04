@@ -15,7 +15,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 ROOT = Path(__file__).resolve().parents[1]
 LLM_DIR = ROOT / "LLM"
@@ -132,7 +132,7 @@ class ContinuousTrainer:
     def _execute_training_job(self, epochs: int, lr: float) -> None:
         """Executes the training loop, computes loss updates, and persists the new checkpoint."""
         try:
-            self._log_event(f"Initializing continuous fine-tuning on collected dataset...")
+            self._log_event("Initializing continuous fine-tuning on collected dataset...")
             if not TRAINING_DATASET_PATH.exists():
                 self._log_event("No collected dataset found. Creating initial seed data...")
 

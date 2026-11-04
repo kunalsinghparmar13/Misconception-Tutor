@@ -10,16 +10,15 @@ from __future__ import annotations
 import sys
 from fractions import Fraction
 from pathlib import Path
-from typing import Any, Dict
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from llm.core.types import ToolDefinition
-from llm.tools.executor import ToolExecutor, ToolRegistry
-from backend import backend_code
+from llm.core.types import ToolDefinition  # noqa: E402
+from llm.tools.executor import ToolExecutor, ToolRegistry  # noqa: E402
+from backend import backend_code  # noqa: E402
 
 tool_registry = ToolRegistry()
 
