@@ -71,6 +71,24 @@ def test_python_debugger_clean_execution():
     assert "Code Compiles & Executes Successfully" in explanation
 
 
+def test_python_debugger_separates_trailing_question_and_flags_average_formula():
+    prompt = (
+        "num_students = 4\n"
+        "total_score = 45\n"
+        "average = total_score / num_students - 1\n"
+        "print('Average score is:', average)\n\n"
+        "it prints 10.25 so it is correct; if not, explain what is wrong?"
+    )
+    explanation, metadata = python_debugger.analyze_and_explain(prompt)
+    assert metadata["error_category"] == "AverageFormulaAdjustment"
+    assert metadata["line"] == 3
+    assert metadata["input_kind"] == "python_code_with_question"
+    assert "it prints 10.25" not in metadata["extracted_code"]
+    assert "average = total_score / num_students - 1" in explanation
+    assert "average = total_score / num_students" in explanation
+    assert "11.25" in explanation
+
+
 # ==============================================================================
 # TEST 2: GENERAL PROBLEM SOLVER
 # ==============================================================================

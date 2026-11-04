@@ -50,14 +50,31 @@ class PythonCodeDebugger:
                 start_idx = i
                 break
 
-        # Collect lines from start_idx until conversation trailing prompt
+        # Collect code until conversational prose resumes. This prevents a
+        # question such as "it prints 10.25; is that correct?" becoming a
+        # bogus Python line in the diagnostic input.
         collected = []
+        saw_code = False
         for line in lines[start_idx:]:
             stripped = line.strip()
-            if stripped.endswith("?") and not any(kw in stripped for kw in code_indicators):
+            looks_like_code = (
+                any(stripped.startswith(kw) for kw in code_indicators if kw.endswith(" "))
+                or stripped.startswith(("else:", "try:", "except", "finally:"))
+                or bool(re.match(r"^(num_students|total_score|average|result|score)\s*=", stripped))
+                or bool(re.match(r"^[A-Za-z_]\w*\s*=", stripped))
+                or bool(re.match(r"^(?:print|return)\s*\(", stripped))
+            )
+            if saw_code and (
+                stripped.endswith("?")
+                or stripped.lower().startswith((
+                    "it prints", "it print", "it output", "the output",
+                    "is it", "if not", "why does", "what is wrong",
+                ))
+            ) and not looks_like_code:
                 break
-            if stripped.lower().startswith(("can you", "what is", "how do", "why does", "please")):
+            if saw_code and stripped and not looks_like_code and not stripped.startswith(("#", "'")):
                 break
+            saw_code = saw_code or looks_like_code
             collected.append(line)
 
         candidate = "\n".join(collected).strip()
@@ -73,6 +90,8 @@ class PythonCodeDebugger:
             "topic": "python_debugging",
             "source": "python_debugger_engine",
             "code_lines": len(code.splitlines()),
+            "extracted_code": code,
+            "input_kind": "python_code_with_question" if code.strip() != user_input.strip() else "python_code",
         }
 
         # Step 1: Syntax & Compilation Check
@@ -173,6 +192,34 @@ class PythonCodeDebugger:
                             "why_it_fails": "`list.sort()` mutates the list in-place and returns `None`. Assigning its result back wipes out your list into `None`!",
                             "fix_hint": "Call `my_list.sort()` by itself without assigning, or use `my_list = sorted(my_list)` to return a new sorted list.",
                         }
+
+        # A frequent beginner mistake is subtracting a correction from an
+        # average expression. Preserve the exact line so the tutor can explain
+        # operator precedence instead of blaming surrounding prose.
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.BinOp):
+                if (
+                    isinstance(node.targets[0], ast.Name)
+                    and node.targets[0].id == "average"
+                    and isinstance(node.value.op, ast.Sub)
+                    and isinstance(node.value.right, ast.Constant)
+                    and node.value.right.value == 1
+                ):
+                    return {
+                        "category": "AverageFormulaAdjustment",
+                        "title": "Average formula subtracts 1",
+                        "line": node.lineno,
+                        "offending_line": code.splitlines()[node.lineno - 1],
+                        "why_it_fails": (
+                            "Python evaluates division before subtraction, so this is "
+                            "`(total_score / num_students) - 1`. Subtracting 1 lowers the "
+                            "average; it is not part of the standard average formula."
+                        ),
+                        "fix_hint": (
+                            "For the average of scores, divide the total by the number "
+                            "of students: `average = total_score / num_students`."
+                        ),
+                    }
 
         # 3. Off-by-one matrix/list indexing: row[col + 1] without boundary check
         for node in ast.walk(tree):
@@ -282,6 +329,44 @@ class PythonCodeDebugger:
             )
         elif bug["category"] == "InPlaceMethodAssignment":
             fixed_code = re.sub(r"(\w+)\s*=\s*\1\.sort\(\)", r"\1.sort()", code)
+        elif bug["category"] == "AverageFormulaAdjustment":
+            fixed_code = re.sub(
+                r"average\s*=\s*total_score\s*/\s*num_students\s*-\s*1",
+                "average = total_score / num_students",
+                code,
+            )
+
+        socratic_question = (
+            f"Which part of line {line_no} changes the value after the division? "
+            "Does the expression represent the standard average, or an adjusted value?"
+            if bug["category"] == "AverageFormulaAdjustment"
+            else (
+                "If you call this function multiple times in a row, what happens to "
+                "the default object? Does Python allocate a brand-new list for each "
+                "call, or does it reuse the existing reference?"
+            )
+        )
+        verified_result = ""
+        if bug["category"] == "AverageFormulaAdjustment":
+            assignments: Dict[str, Any] = {}
+            try:
+                tree = ast.parse(code)
+                for node in ast.walk(tree):
+                    if (
+                        isinstance(node, ast.Assign)
+                        and isinstance(node.targets[0], ast.Name)
+                        and node.targets[0].id in {"total_score", "num_students"}
+                    ):
+                        assignments[node.targets[0].id] = ast.literal_eval(node.value)
+                if {"total_score", "num_students"} <= assignments.keys() and assignments["num_students"] != 0:
+                    standard = assignments["total_score"] / assignments["num_students"]
+                    verified_result = (
+                        f"\n\n**Verified result:** With `total_score = {assignments['total_score']}` "
+                        f"and `num_students = {assignments['num_students']}`, the standard average is "
+                        f"`{standard:g}`. The original expression prints `{standard - 1:g}` because it subtracts 1."
+                    )
+            except (ValueError, TypeError, ZeroDivisionError, SyntaxError):
+                pass
 
         return (
             f"### 🔍 Logical Antipattern: {bug['title']}\n\n"
@@ -290,8 +375,9 @@ class PythonCodeDebugger:
             f"{line_no} | {bug.get('offending_line', '')}\n"
             f"```\n\n"
             f"**Why it fails:** {bug['why_it_fails']}\n\n"
+            f"{verified_result}\n"
             f"### 💡 Socratic Question\n"
-            f"If you call this function multiple times in a row, what happens to the default object? Does Python allocate a brand-new list for each call, or does it reuse the existing reference?\n\n"
+            f"{socratic_question}\n\n"
             f"### 🛠️ Idiomatic Solution\n"
             f"```python\n"
             f"{fixed_code}\n"
