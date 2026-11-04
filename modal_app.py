@@ -1,21 +1,22 @@
-"""Deploy Misconception Tutor and the Gemma adapter on Modal.
-
-Deploy from the repository root:
-
-    modal deploy modal_app.py
-
-The public URL printed by Modal serves the existing Flask UI and API.
-"""
+"""Deploy Misconception Tutor with persistent SQLite storage."""
 
 from pathlib import Path
-
 import modal
 
-
 ROOT = Path(__file__).resolve().parent
+
 APP_NAME = "misconception-tutor"
+
 ADAPTER_ID = "kunalsinghparmar/misconception-tutor-gemma4-e4b"
+
 BASE_MODEL = "unsloth/gemma-4-E4B-it-unsloth-bnb-4bit"
+
+DB_VOLUME_NAME = "misconception-tutor-data"
+
+db_volume = modal.Volume.from_name(
+    DB_VOLUME_NAME,
+    create_if_missing=True,
+)
 
 app = modal.App(APP_NAME)
 
@@ -57,22 +58,37 @@ image = (
     gpu="L4",
     timeout=900,
     scaledown_window=300,
+    max_containers=1,
+    volumes={
+        "/mnt/tutor-data": db_volume,
+    },
     env={
-        "PYTHONPATH": "/root/misconception-tutor/src:/root/misconception-tutor",
+        "PYTHONPATH": (
+            "/root/misconception-tutor/src:"
+            "/root/misconception-tutor"
+        ),
         "LLM_ADAPTER_ID": ADAPTER_ID,
         "LLM_BASE_MODEL": BASE_MODEL,
         "LLM_ONLY_MODEL": "1",
+        "TUTOR_DB_PATH": "/mnt/tutor-data/tutor.db",
+        "MODAL_DB_VOLUME": DB_VOLUME_NAME,
         "BACKEND_HOST": "0.0.0.0",
         "PORT": "8000",
     },
+    # Add the HF secret here if your base model or adapter
+    # requires authenticated access.
+    secrets=[
+        modal.Secret.from_name("huggingface-secret")
+    ],
 )
-@modal.concurrent(max_inputs=8)
+@modal.concurrent(max_inputs=1)
 @modal.wsgi_app()
 def flask_app():
     import os
     import sys
 
     os.chdir("/root/misconception-tutor")
+
     sys.path.insert(0, "/root/misconception-tutor/src")
     sys.path.insert(0, "/root/misconception-tutor")
 

@@ -21,20 +21,45 @@
     '<div id="targeted-practice" class="mt-6"></div>';
   document.querySelector('main > div')?.prepend(response);
 
-  async function refreshBackendStatus() {
-    const modelLabel = document.querySelector('header > div:first-child > span:last-child');
-    if (!modelLabel) return;
+  async function askTutor(question, subject = "Mathematics") {
     try {
-      const result = await fetch('/api/backend-status');
-      if (!result.ok) return;
-      const status = await result.json();
-      modelLabel.textContent = status.model
-        ? `Active Model: ${status.model}`
-        : 'Active Model: Local Tutor';
+        const response = await fetch("/api/llm/answer", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                question,
+                subject,
+                learner_id: "student_demo"
+            })
+        });
+
+        const result = await response.json();
+
+        if (response.status === 503) {
+            throw new Error(
+                result.answer || "The AI model is currently unavailable."
+            );
+        }
+
+        if (!response.ok) {
+            throw new Error(
+                result.error || "Something went wrong."
+            );
+        }
+
+        if (result.status !== "success") {
+            throw new Error("The tutor could not generate an answer.");
+        }
+
+        return result;
+
     } catch (error) {
-      console.warn('Unable to read backend status.', error);
+        console.error("Tutor API error:", error);
+        throw error;
     }
-  }
+}
 
   function setLoading(loading) {
     sendButton.disabled = loading;

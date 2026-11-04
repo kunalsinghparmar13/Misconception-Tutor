@@ -59,13 +59,12 @@ class LLMEngine:
 
     @property
     def adapter_source(self) -> str:
-        """Prefer a notebook-exported adapter, then the published HF adapter."""
-        notebook_adapter = os.getenv(
-            "LLM_NOTEBOOK_ADAPTER_PATH",
-            str(LLM_DIR / "gemma4-e4b-math-code-lora"),
-        )
-        if Path(notebook_adapter).is_dir() and (Path(notebook_adapter) / "adapter_config.json").exists():
-            return notebook_adapter
+        # Use a local adapter only when explicitly configured.
+        local_adapter = os.getenv("LLM_NOTEBOOK_ADAPTER_PATH")
+        if local_adapter and Path(local_adapter).is_dir():
+            if (Path(local_adapter) / "adapter_config.json").exists():
+                return local_adapter
+
         return os.getenv(
             "LLM_ADAPTER_ID",
             "kunalsinghparmar/misconception-tutor-gemma4-e4b",
@@ -102,56 +101,83 @@ class LLMEngine:
             active_mode = "PEFT Adapter (Gemma-4B)"
 
         return {
-            "configured": configured,
-            "dependenciesInstalled": dependencies_installed,
-            "loaded": self._model is not None,
-            "available": True,  # Cognitive Socratic Engine ensures 100% availability
-            "liveAiEnabled": True,
-            "model": self.adapter_source,
-            "baseModel": self.base_model,
-            "activeCheckpoint": self.active_checkpoint,
-            "trainingSamplesCollected": dataset_size,
-            "mode": active_mode,
-            "tools": [t.name for t in tool_registry.list_tools()],
-            "ecc_provider": ecc_provider,
-            "error": self.error or dep_error,
-            "modelOnly": os.getenv("LLM_ONLY_MODEL", "").lower() in {"1", "true", "yes"},
-        }
+                "configured": bool(self.adapter_source),
+                "dependenciesInstalled": dependencies_installed,
+                "loaded": self._model is not None,
+                "available": self._model is not None,
+                "liveAiEnabled": self._model is not None,
+                 "model": self.adapter_source,
+                "baseModel": self.base_model,
+                "activeCheckpoint": self.active_checkpoint,
+                "trainingSamplesCollected": dataset_size,
+                "mode": (
+                    "Fine-tuned Gemma adapter"
+                    if self._model is not None
+                    else "Model not loaded"
+                    ),
+                "tools": [t.name for t in tool_registry.list_tools()],
+                "ecc_provider": ecc_provider,
+                "error": self.error or dep_error,
+                "modelOnly": os.getenv("LLM_ONLY_MODEL", "").lower()
+                    in {"1", "true", "yes"},
+                }
 
     def _try_load_peft(self) -> bool:
-        """Attempts to load the local PEFT LoRA adapter if weights and dependencies exist."""
+        """Load the published Hugging Face PEFT adapter once."""
         if self._model is not None:
             return True
+
         with self._lock:
             if self._model is not None:
                 return True
-            adapter_source = os.getenv("LLM_ADAPTER_PATH", self.adapter_source)
-            is_local = Path(adapter_source).exists()
-            adapter_config = Path(adapter_source) / "adapter_config.json" if is_local else None
-            if is_local and not adapter_config.exists():
-                return False
+
+            adapter_source = os.getenv("LLM_ADAPTER_PATH") or self.adapter_source
+            hf_token = os.getenv("HF_TOKEN")
+
             try:
-                from peft import AutoPeftModelForCausalLM
+                import torch
+                from peft import AutoPeftModelForCausalLM, PeftConfig
                 from transformers import AutoTokenizer
 
-                safetensor_file = Path(adapter_source) / "adapter_model.safetensors"
-                if is_local and (not safetensor_file.exists() or safetensor_file.stat().st_size < 1000):
-                    # LFS pointer file or unsmudged weights
-                    self.error = "PEFT adapter weights are in Git LFS pointer format. Using cognitive Socratic runtime."
-                    return False
+                # Read adapter metadata first.
+                peft_config = PeftConfig.from_pretrained(
+                    adapter_source,
+                    token=hf_token,
+                )
 
-                self._tokenizer = AutoTokenizer.from_pretrained(adapter_source, trust_remote_code=True)
+                base_model_id = (
+                    peft_config.base_model_name_or_path
+                    or self.base_model
+                )
+
+                # Load tokenizer from the base model, not necessarily the adapter.
+                self._tokenizer = AutoTokenizer.from_pretrained(
+                    base_model_id,
+                    token=hf_token,
+                    trust_remote_code=True,
+                )
+
+                # Load base model + adapter.
                 self._model = AutoPeftModelForCausalLM.from_pretrained(
                     adapter_source,
+                    token=hf_token,
                     device_map=os.getenv("LLM_DEVICE_MAP", "auto"),
                     torch_dtype="auto",
                     low_cpu_mem_usage=True,
                     trust_remote_code=True,
                 )
+
                 self._model.eval()
+                self.error = None
                 return True
+
             except Exception as exc:
-                self.error = f"HF PEFT adapter fallback activated ({adapter_source}): {exc}"
+                self._model = None
+                self._tokenizer = None
+                self.error = (
+                    f"Could not load adapter '{adapter_source}': "
+                    f"{type(exc).__name__}: {exc}"
+                )
                 return False
 
     def answer_socratic(

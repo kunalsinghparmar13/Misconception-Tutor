@@ -30,7 +30,7 @@ from functools import lru_cache
 from fractions import Fraction
 from math import lcm, gcd
 from typing import Dict, List, Tuple, Optional, Any, Callable
-
+from backend.db_persistence import commit_sqlite_volume
 
 # ==============================================================================
 # SECTION 1: EXACT RATIONAL ARITHMETIC & INPUT PARSER
@@ -416,7 +416,14 @@ def generate_problem(misc_id: str, difficulty: int = 1) -> Dict[str, Any]:
 # SECTION 7: SQLITE TRACKING & BAYESIAN KNOWLEDGE TRACING (BKT)
 # ==============================================================================
 
-DEFAULT_DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "tutor.db")
+DDEFAULT_DB_PATH = os.getenv(
+    "TUTOR_DB_PATH",
+    os.path.join(
+        os.path.dirname(os.path.dirname(__file__)),
+        "data",
+        "tutor.db",
+    ),
+)
 
 DEFAULT_BKT_PARAMS = {
     "p_init": 0.50,    # Prior probability of concept mastery
@@ -429,7 +436,8 @@ DEFAULT_BKT_PARAMS = {
 def get_connection(db_path: Optional[str] = None) -> sqlite3.Connection:
     """Returns connection with Write-Ahead Logging (WAL) mode enabled."""
     path = db_path or DEFAULT_DB_PATH
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    db_directory = os.path.dirname(os.path.abspath(path))
+    os.makedirs(db_directory, exist_ok=True)
     conn = sqlite3.connect(path, timeout=10.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL;")
@@ -480,7 +488,9 @@ def init_db(db_path: Optional[str] = None) -> None:
             );
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_practice_learner ON practice_attempts(learner_id, subject, misconception);")
+    conn.execute("PRAGMA wal_checkpoint(FULL)")
     conn.close()
+    commit_sqlite_volume()
 
 
 def log_attempt_db(
@@ -512,7 +522,9 @@ def log_attempt_db(
 
         if target_misc:
             _update_bkt_incremental(conn, learner_id, target_misc, bool(correct), timestamp)
+    conn.execute("PRAGMA wal_checkpoint(FULL)")
     conn.close()
+    commit_sqlite_volume()
 
 
 def _update_bkt_incremental(conn: sqlite3.Connection, learner_id: str, misc_id: str, is_correct: bool, ts: str):
@@ -586,7 +598,9 @@ def log_practice_attempt(
                 int(bool(correct)),
             ),
         )
+    conn.execute("PRAGMA wal_checkpoint(FULL)")
     conn.close()
+    commit_sqlite_volume()
 
 
 def get_practice_progress(learner_id: str, db_path: Optional[str] = None) -> Dict[str, Any]:

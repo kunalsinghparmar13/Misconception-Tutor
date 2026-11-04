@@ -67,30 +67,37 @@ def screen_image():
 # SECTION 2: HEALTH & SYSTEM READINESS API
 # ==============================================================================
 
-@app.get("/api/health")
-def health():
-    """Returns service health, database status, and LLM availability."""
+@app.get("/api/ready")
+def ready():
+    status = llm_engine.status()
+
+    if not status["loaded"]:
+        return jsonify({
+            "ready": False,
+            "model": status["model"],
+            "error": status["error"],
+        }), 503
+
     return jsonify({
-        "status": "online",
-        "database": "sqlite_wal_active",
-        "llm": llm_engine.status(),
-        "trainer": continuous_trainer.get_status(),
-    })
+        "ready": True,
+        "model": status["model"],
+    }), 200
 
 
 @app.get("/api/backend-status")
 def backend_status():
-    """Returns runtime state for UI status badges."""
     llm_stat = llm_engine.status()
-    trainer_stat = continuous_trainer.get_status()
+
     return jsonify({
         "status": "online",
-        "liveAiEnabled": True,
+        "liveAiEnabled": llm_stat["loaded"],
         "model": llm_stat["model"],
-        "activeCheckpoint": trainer_stat["activeCheckpoint"],
-        "trainingSamplesCollected": llm_stat["trainingSamplesCollected"],
         "llmLoaded": llm_stat["loaded"],
         "llmError": llm_stat["error"],
+        "trainingMode": "offline_kaggle",
+        "trainingSamplesCollected": (
+            llm_stat["trainingSamplesCollected"]
+        ),
     })
 
 
@@ -377,6 +384,8 @@ def llm_answer():
             mode=mode,
             learner_id=learner_id,
         )
+        if result.get("status") == "model_unavailable":
+            return jsonify(result), 503
         metadata = result.get("metadata") or {}
         misconception = classify_misconception(subject, question, metadata)
         result["misconception"] = misconception
@@ -516,9 +525,14 @@ def export_dataset():
 
 @app.post("/api/llm/train")
 def trigger_training():
-    """Triggers continuous fine-tuning run on the collected interaction dataset."""
-    result = continuous_trainer.start_training_run()
-    return jsonify(result)
+    return jsonify({
+        "status": "disabled",
+        "message": (
+            "Online training is disabled. "
+            "Export the collected dataset and run real LoRA "
+            "training in your Kaggle training workflow."
+        ),
+    }), 410
 
 
 @app.post("/api/python/debug")
@@ -553,8 +567,13 @@ def debug_python_code():
 
 @app.get("/api/llm/train/status")
 def training_status():
-    """Returns real-time fine-tuning progress, loss curves, and active checkpoint."""
-    return jsonify(continuous_trainer.get_status())
+    return jsonify({
+        "status": "offline_training",
+        "message": (
+            "Model training is performed separately. "
+            "The deployed service only handles inference."
+        ),
+    })
 
 
 # ==============================================================================
