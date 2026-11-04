@@ -54,7 +54,7 @@ image = (
 
 @app.function(
     image=image,
-    gpu=modal.gpu.L4(),
+    gpu="L4",
     timeout=900,
     scaledown_window=300,
     env={
