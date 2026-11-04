@@ -416,7 +416,7 @@ def generate_problem(misc_id: str, difficulty: int = 1) -> Dict[str, Any]:
 # SECTION 7: SQLITE TRACKING & BAYESIAN KNOWLEDGE TRACING (BKT)
 # ==============================================================================
 
-DDEFAULT_DB_PATH = os.getenv(
+DEFAULT_DB_PATH = os.getenv(
     "TUTOR_DB_PATH",
     os.path.join(
         os.path.dirname(os.path.dirname(__file__)),

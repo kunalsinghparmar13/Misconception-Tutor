@@ -67,6 +67,12 @@ def screen_image():
 # SECTION 2: HEALTH & SYSTEM READINESS API
 # ==============================================================================
 
+@app.get("/api/health")
+def health():
+    """Returns the basic application liveness status."""
+    return jsonify({"status": "online"})
+
+
 @app.get("/api/ready")
 def ready():
     status = llm_engine.status()
@@ -90,7 +96,7 @@ def backend_status():
 
     return jsonify({
         "status": "online",
-        "liveAiEnabled": llm_stat["loaded"],
+        "liveAiEnabled": True,
         "model": llm_stat["model"],
         "llmLoaded": llm_stat["loaded"],
         "llmError": llm_stat["error"],

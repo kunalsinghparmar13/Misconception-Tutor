@@ -31,7 +31,5 @@ jobs:
           ruff check backend tests
 
       - name: Run tests
-        env:
-          LLM_ONLY_MODEL: "1"
         run: |
           pytest -q
