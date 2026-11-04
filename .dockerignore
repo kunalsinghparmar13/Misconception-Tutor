@@ -1,0 +1,10 @@
+.git
+.gitignore
+.venv
+.pytest_cache
+__pycache__
+*.pyc
+data/tutor.db
+LLM/checkpoint-*
+LLM/data/continuous_training_dataset.jsonl
+tests
