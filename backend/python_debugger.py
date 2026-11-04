@@ -21,77 +21,83 @@ from typing import Any, Dict, List, Optional, Tuple
 class PythonCodeDebugger:
     """Intelligent Python compiler, AST static analyzer, and Socratic remediation engine."""
 
-    def extract_code(self, text: str) -> str:
-        """Extracts code blocks from markdown (```python ... ```) or extracts contiguous code lines."""
+    _QUESTION_PREFIXES = (
+        "can you", "what is", "how do", "why does", "why is", "here is",
+        "i have", "please", "it prints", "it print", "the output", "is it",
+        "if not", "what is wrong", "what's wrong", "does this",
+    )
+
+    def split_input(self, text: str) -> Tuple[str, str, int]:
+        """Split mixed prose/code input and return code, question, and source line."""
         code_block = re.search(r"```(?:python)?\s*\n(.*?)\n```", text, re.DOTALL | re.IGNORECASE)
         if code_block:
-            return code_block.group(1).strip()
+            before = text[:code_block.start()].strip()
+            after = text[code_block.end():].strip()
+            question = " ".join(part for part in (before, after) if part)
+            return code_block.group(1).strip(), question, text[:code_block.start()].count("\n") + 1
 
-        clean_text = text.strip()
+        lines = text.strip().splitlines()
+        start = next((i for i, line in enumerate(lines) if self._looks_like_code(line)), 0)
+        code_lines: List[str] = []
+        question_lines: List[str] = lines[:start]
+        saw_code = False
+        for line in lines[start:]:
+            stripped = line.strip()
+            if stripped and saw_code and not self._looks_like_code(line):
+                question_lines.append(line)
+                continue
+            if not stripped and saw_code:
+                code_lines.append(line)
+                continue
+            if self._looks_like_code(line):
+                code_lines.append(line)
+                saw_code = True
+            else:
+                question_lines.append(line)
+        code = "\n".join(code_lines).strip()
+        question = " ".join(line.strip() for line in question_lines if line.strip())
+        return code or text.strip(), question, start + 1
+
+    def _looks_like_code(self, line: str) -> bool:
+        stripped = line.strip()
+        if not stripped:
+            return False
+        if stripped.startswith(("#", "def ", "class ", "if ", "elif ", "else:", "for ", "while ", "try:", "except", "finally:", "return ", "import ", "from ", "with ", "async ")):
+            return True
+        if re.match(r"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?\s*=", stripped):
+            return True
+        if re.match(r"^(?:print|len|range|sum|int|float|str|list|dict|set)\s*\(", stripped):
+            return True
+        if stripped.startswith((")", "]", "}")):
+            return True
+        return bool(line[:1].isspace() and not stripped.lower().startswith(self._QUESTION_PREFIXES))
+
+    def extract_code(self, text: str) -> str:
+        """Extracts code blocks from markdown (```python ... ```) or extracts contiguous code lines."""
+        code, _, _ = self.split_input(text)
+        clean_text = code.strip()
         try:
             ast.parse(clean_text)
             return clean_text
         except SyntaxError:
             pass
 
-        lines = clean_text.splitlines()
-        code_indicators = ("def ", "import ", "from ", "class ", "return ", "for ", "while ", "if ", "elif ", "else:", "print(", "try:", "except", "=", "[", "{")
-
-        # Find first line that looks like Python code
-        start_idx = 0
-        for i, line in enumerate(lines):
-            stripped = line.strip()
-            # If line is conversational intro like "Can you fix:", "Here is my code:", skip
-            if stripped.endswith(":") and not any(stripped.startswith(kw) for kw in ("def ", "if ", "for ", "while ", "class ", "try", "except")):
-                continue
-            if stripped.lower().startswith(("can you", "what is", "how do", "why does", "here is", "i have", "please")):
-                continue
-            if any(kw in stripped for kw in code_indicators):
-                start_idx = i
-                break
-
-        # Collect code until conversational prose resumes. This prevents a
-        # question such as "it prints 10.25; is that correct?" becoming a
-        # bogus Python line in the diagnostic input.
-        collected = []
-        saw_code = False
-        for line in lines[start_idx:]:
-            stripped = line.strip()
-            looks_like_code = (
-                any(stripped.startswith(kw) for kw in code_indicators if kw.endswith(" "))
-                or stripped.startswith(("else:", "try:", "except", "finally:"))
-                or bool(re.match(r"^(num_students|total_score|average|result|score)\s*=", stripped))
-                or bool(re.match(r"^[A-Za-z_]\w*\s*=", stripped))
-                or bool(re.match(r"^(?:print|return)\s*\(", stripped))
-            )
-            if saw_code and (
-                stripped.endswith("?")
-                or stripped.lower().startswith((
-                    "it prints", "it print", "it output", "the output",
-                    "is it", "if not", "why does", "what is wrong",
-                ))
-            ) and not looks_like_code:
-                break
-            if saw_code and stripped and not looks_like_code and not stripped.startswith(("#", "'")):
-                break
-            saw_code = saw_code or looks_like_code
-            collected.append(line)
-
-        candidate = "\n".join(collected).strip()
-        return candidate if candidate else clean_text
+        return clean_text
 
     def analyze_and_explain(self, user_input: str) -> Tuple[str, Dict[str, Any]]:
         """
         Main entrypoint: parses, compiles, checks AST antipatterns, simulates execution,
         and generates a high-precision Socratic diagnosis with corrected code.
         """
-        code = self.extract_code(user_input)
+        code, question_text, source_line = self.split_input(user_input)
         metadata: Dict[str, Any] = {
             "topic": "python_debugging",
             "source": "python_debugger_engine",
             "code_lines": len(code.splitlines()),
             "extracted_code": code,
             "input_kind": "python_code_with_question" if code.strip() != user_input.strip() else "python_code",
+            "question_text": question_text,
+            "source_line": source_line,
         }
 
         # Step 1: Syntax & Compilation Check
@@ -103,7 +109,7 @@ class PythonCodeDebugger:
 
         # Step 2: AST Semantic & Logical Antipattern Check
         parsed_tree = ast.parse(code)
-        semantic_bug = self._check_semantic_antipatterns(code, parsed_tree)
+        semantic_bug = self._check_semantic_antipatterns(code, parsed_tree, question_text)
         if semantic_bug:
             metadata["error_category"] = semantic_bug["category"]
             metadata["line"] = semantic_bug.get("line")
@@ -116,9 +122,44 @@ class PythonCodeDebugger:
             metadata["line"] = exec_result.get("line")
             return self._format_runtime_explanation(code, exec_result), metadata
 
+        output_issue = self._check_claimed_output(question_text, exec_result.get("stdout", ""))
+        if output_issue:
+            metadata["error_category"] = "OutputMismatch"
+            metadata["line"] = output_issue["line"]
+            return self._format_output_mismatch(code, exec_result, output_issue), metadata
+
         # Step 4: Valid Execution - Provide Socratic Explanation of How the Code Works
         metadata["status"] = "code_executes_cleanly"
         return self._format_clean_code_explanation(code, exec_result), metadata
+
+    def _check_claimed_output(self, question: str, stdout: str) -> Optional[Dict[str, Any]]:
+        if not question or not stdout.strip():
+            return None
+        claimed = re.search(
+            r"(?:prints?|outputs?|result(?:\s+is)?|gives?)\D*(-?\d+(?:\.\d+)?)",
+            question,
+            re.IGNORECASE,
+        )
+        actual = re.search(r"-?\d+(?:\.\d+)?", stdout)
+        if claimed and actual and claimed.group(1) != actual.group(0):
+            return {"claimed": claimed.group(1), "actual": actual.group(0), "line": 1}
+        return None
+
+    def _format_output_mismatch(
+        self, code: str, result: Dict[str, Any], issue: Dict[str, Any]
+    ) -> str:
+        return (
+            "### 🔍 Output Mismatch\n\n"
+            f"Your question says the program should produce `{issue['claimed']}`, but verified "
+            f"execution produced `{issue['actual']}`.\n\n"
+            "The code and question were analyzed separately, so the natural-language question "
+            "was not treated as Python code.\n\n"
+            "### 🛠️ Code that was executed\n"
+            f"```python\n{code}\n```\n\n"
+            "### 📌 Key Takeaway\n"
+            "Compare the expected value with the actual output, then trace the first expression "
+            "that changes the value."
+        )
 
     def _check_syntax(self, code: str) -> Optional[Dict[str, Any]]:
         """Compiles code to detect syntax, indentation, and token errors."""
@@ -160,7 +201,7 @@ class PythonCodeDebugger:
                 "hint": hint,
             }
 
-    def _check_semantic_antipatterns(self, code: str, tree: ast.AST) -> Optional[Dict[str, Any]]:
+    def _check_semantic_antipatterns(self, code: str, tree: ast.AST, question: str = "") -> Optional[Dict[str, Any]]:
         """Inspects AST nodes for common mental models bugs that compile but fail logically."""
         
         # 1. Mutable Default Argument: def func(a, b=[])
@@ -193,31 +234,36 @@ class PythonCodeDebugger:
                             "fix_hint": "Call `my_list.sort()` by itself without assigning, or use `my_list = sorted(my_list)` to return a new sorted list.",
                         }
 
-        # A frequent beginner mistake is subtracting a correction from an
-        # average expression. Preserve the exact line so the tutor can explain
-        # operator precedence instead of blaming surrounding prose.
+        # A post-division adjustment is often an unintended formula change.
+        # Keep this generic and only report it when the learner asks for a
+        # correctness/error diagnosis.
         for node in ast.walk(tree):
             if isinstance(node, ast.Assign) and isinstance(node.value, ast.BinOp):
                 if (
                     isinstance(node.targets[0], ast.Name)
-                    and node.targets[0].id == "average"
-                    and isinstance(node.value.op, ast.Sub)
+                    and isinstance(node.value.left, ast.BinOp)
+                    and isinstance(node.value.left.op, ast.Div)
+                    and isinstance(node.value.op, (ast.Add, ast.Sub))
                     and isinstance(node.value.right, ast.Constant)
-                    and node.value.right.value == 1
+                    and isinstance(node.value.right.value, (int, float))
+                    and any(token in question.lower() for token in ("wrong", "error", "correct", "should", "prints", "output"))
                 ):
+                    adjustment = ast.unparse(node.value.right)
+                    operator = "+" if isinstance(node.value.op, ast.Add) else "-"
+                    name = node.targets[0].id
                     return {
-                        "category": "AverageFormulaAdjustment",
-                        "title": "Average formula subtracts 1",
+                        "category": "AverageFormulaAdjustment" if name == "average" else "PostDivisionAdjustment",
+                        "title": f"Formula applies `{operator} {adjustment}` after division",
                         "line": node.lineno,
                         "offending_line": code.splitlines()[node.lineno - 1],
                         "why_it_fails": (
-                            "Python evaluates division before subtraction, so this is "
-                            "`(total_score / num_students) - 1`. Subtracting 1 lowers the "
-                            "average; it is not part of the standard average formula."
+                            f"Python evaluates division before `{operator} {adjustment}`, so this "
+                            f"expression is `({ast.unparse(node.value.left)}) {operator} {adjustment}`. "
+                            "That final adjustment changes the quotient and may not match the intended formula."
                         ),
                         "fix_hint": (
-                            "For the average of scores, divide the total by the number "
-                            "of students: `average = total_score / num_students`."
+                            f"Verify whether `{operator} {adjustment}` is intentional. If the goal is "
+                            f"the quotient only, use `{name} = {ast.unparse(node.value.left)}`."
                         ),
                     }
 
@@ -335,11 +381,20 @@ class PythonCodeDebugger:
                 "average = total_score / num_students",
                 code,
             )
+        elif bug["category"] == "PostDivisionAdjustment":
+            fixed_lines = lines[:]
+            original = fixed_lines[line_no - 1]
+            fixed_lines[line_no - 1] = re.sub(
+                r"(\w+\s*=\s*[^#\n]+/\s*[^#\n]+?)\s*[+-]\s*(?:\d+(?:\.\d*)?|\.\d+)\s*$",
+                r"\1",
+                original,
+            )
+            fixed_code = "\n".join(fixed_lines)
 
         socratic_question = (
             f"Which part of line {line_no} changes the value after the division? "
             "Does the expression represent the standard average, or an adjusted value?"
-            if bug["category"] == "AverageFormulaAdjustment"
+            if bug["category"] in {"AverageFormulaAdjustment", "PostDivisionAdjustment"}
             else (
                 "If you call this function multiple times in a row, what happens to "
                 "the default object? Does Python allocate a brand-new list for each "
@@ -347,7 +402,7 @@ class PythonCodeDebugger:
             )
         )
         verified_result = ""
-        if bug["category"] == "AverageFormulaAdjustment":
+        if bug["category"] in {"AverageFormulaAdjustment", "PostDivisionAdjustment"}:
             assignments: Dict[str, Any] = {}
             try:
                 tree = ast.parse(code)
@@ -360,10 +415,27 @@ class PythonCodeDebugger:
                         assignments[node.targets[0].id] = ast.literal_eval(node.value)
                 if {"total_score", "num_students"} <= assignments.keys() and assignments["num_students"] != 0:
                     standard = assignments["total_score"] / assignments["num_students"]
+                    adjustment = 1
+                    target = next(
+                        (
+                            node for node in ast.walk(tree)
+                            if isinstance(node, ast.Assign)
+                            and isinstance(node.targets[0], ast.Name)
+                            and node.targets[0].id in {"average", "result"}
+                            and isinstance(node.value, ast.BinOp)
+                        ),
+                        None,
+                    )
+                    if target is not None:
+                        adjustment = ast.literal_eval(target.value.right)
+                        if isinstance(target.value.op, ast.Add):
+                            adjustment = -adjustment
+                    original = standard - adjustment
                     verified_result = (
                         f"\n\n**Verified result:** With `total_score = {assignments['total_score']}` "
                         f"and `num_students = {assignments['num_students']}`, the standard average is "
-                        f"`{standard:g}`. The original expression prints `{standard - 1:g}` because it subtracts 1."
+                        f"`{standard:g}`. The original expression applies its final adjustment and prints "
+                        f"`{original:g}`."
                     )
             except (ValueError, TypeError, ZeroDivisionError, SyntaxError):
                 pass
@@ -395,12 +467,16 @@ class PythonCodeDebugger:
         err_msg = res["error_message"]
 
         fix_hint = "Ensure variables match expected types and divisors are non-zero."
+        fixed_code = code
         if err_type == "ZeroDivisionError":
             fix_hint = "Check denominator before division: add a guard like `if denominator != 0:` to prevent dividing by zero."
+            fixed_code = "if denominator != 0:\n    result = numerator / denominator\nelse:\n    result = None  # handle the zero-denominator case"
         elif err_type == "TypeError" and "can only concatenate" in err_msg:
             fix_hint = "Python does not automatically coerce integers to strings during concatenation. Wrap the value in `str(value)` or use an f-string: `f'Result: {value}'`."
+            fixed_code = re.sub(r"(['\"][^'\"]*['\"])\s*\+\s*(\w+)", r"f\1{\2}", code)
         elif err_type == "IndexError":
             fix_hint = "The requested index is outside the length of the list. Remember Python lists are 0-indexed, so the valid indices are `0` to `len - 1`."
+            fixed_code = code + "\n# Guard an index before reading it: 0 <= index < len(items)"
 
         return (
             f"### 🔍 Runtime Exception: `{err_type}`\n\n"
@@ -414,6 +490,8 @@ class PythonCodeDebugger:
             f"### 🛠️ Socratic Step-by-Step Fix\n"
             f"1. Examine the variable values evaluated right before Line {line_no}.\n"
             f"2. Add input validation or type casting before performing the operation.\n\n"
+            f"### 🛠️ Corrected Pattern\n"
+            f"```python\n{fixed_code}\n```\n\n"
             f"### 📌 Key Takeaway\n"
             f"Always guard against boundary inputs (empty lists, 0 denominators, mismatched types) before operations to build resilient Python software."
         )

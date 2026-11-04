@@ -89,6 +89,33 @@ def test_python_debugger_separates_trailing_question_and_flags_average_formula()
     assert "11.25" in explanation
 
 
+def test_python_debugger_handles_arbitrary_post_division_formula():
+    prompt = (
+        "total = 20\n"
+        "people = 4\n"
+        "score = total / people + 2\n"
+        "print(score)\n\n"
+        "It prints 7.0. Is this correct or wrong?"
+    )
+    explanation, metadata = python_debugger.analyze_and_explain(prompt)
+    assert metadata["error_category"] == "PostDivisionAdjustment"
+    assert metadata["line"] == 3
+    assert "score = total / people" in explanation
+    assert "score = total / people + 2" in explanation
+
+
+def test_python_debugger_reports_claimed_output_mismatch():
+    prompt = (
+        "value = 2 * 3\n"
+        "print(value)\n\n"
+        "It prints 7. Is the output correct?"
+    )
+    explanation, metadata = python_debugger.analyze_and_explain(prompt)
+    assert metadata["error_category"] == "OutputMismatch"
+    assert "question says" in explanation
+    assert "`6`" in explanation
+
+
 # ==============================================================================
 # TEST 2: GENERAL PROBLEM SOLVER
 # ==============================================================================
