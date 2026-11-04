@@ -105,6 +105,31 @@ Set `LLM_ONLY_MODEL=1` when you want strict model-only behavior: the app will
 return a clear model-unavailable response instead of using the deterministic
 fallback.
 
+### Deploy the real model on Modal
+
+The repository includes [`modal_app.py`](modal_app.py), so you do not need to
+create that file manually. From the repository root, install and authenticate
+the Modal CLI, then deploy:
+
+```bash
+python3 -m pip install modal
+modal setup
+modal deploy modal_app.py
+```
+
+The deployment uses an L4 GPU, installs the CUDA-compatible inference stack,
+copies the application into the container, and sets the adapter/base-model
+pair used by the Kaggle fine-tune. Modal prints the public HTTPS URL after a
+successful deployment. Verify it with:
+
+```bash
+curl https://YOUR-MODAL-URL/api/health
+```
+
+The response must report `"modelOnly": true` and `"loaded": true`. If the
+Hugging Face repository is private or gated, create a Modal secret containing
+`HF_TOKEN` and add it to the function configuration before deploying.
+
 ---
 
 ### Option B: Instant Worldwide Public HTTPS URL (Cloudflare Quick Tunnel — 100% Free)
