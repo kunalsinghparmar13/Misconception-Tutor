@@ -26,6 +26,7 @@ from backend.security.guard import prompt_guard
 from backend.security.sanitizer import sanitize_input_text, sanitize_math_answer
 from backend.security.middleware import register_security_middleware
 from backend.memory.lifecycle import memory_lifecycle
+from backend.practice import classify_misconception, generate_practice_set
 
 ROOT = Path(__file__).resolve().parents[1]
 UI_DIR = ROOT / "UI and UX"
@@ -277,6 +278,11 @@ def diagnose_answer():
         "student_parsed": backend_code.format_fraction(student_frac) if student_frac else user_answer,
         "masteries": masteries,
         "follow_up_problem": follow_up_problem,
+        "practice_set": generate_practice_set(
+            "Mathematics",
+            detected_misc or target_misc,
+            count=6,
+        ),
         "training_sample_id": sample_id,
     })
 
@@ -304,6 +310,17 @@ def get_learner_profile():
         "masteries": masteries,
         "bug_rates": bug_rates,
         "belief_scores": beliefs,
+        "practice_progress": backend_code.get_practice_progress(learner_id),
+    })
+
+
+@app.get("/api/practice/progress")
+def get_practice_progress():
+    """Returns longitudinal accuracy evidence for targeted practice."""
+    learner_id = sanitize_input_text(request.args.get("learner_id", "student_demo"), max_length=64) or "student_demo"
+    return jsonify({
+        "learner_id": learner_id,
+        **backend_code.get_practice_progress(learner_id),
     })
 
 
@@ -360,9 +377,68 @@ def llm_answer():
             mode=mode,
             learner_id=learner_id,
         )
+        metadata = result.get("metadata") or {}
+        misconception = classify_misconception(subject, question, metadata)
+        result["misconception"] = misconception
+        result["practice_set"] = generate_practice_set(subject, misconception, count=6)
         return jsonify(result)
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
+
+
+@app.post("/api/practice/submit")
+def submit_practice_attempt():
+    """Grades one targeted math or Python practice item and records progress."""
+    body = request.get_json(silent=True) or {}
+    learner_id = sanitize_input_text(str(body.get("learner_id", "student_demo")), max_length=64) or "student_demo"
+    session_id = sanitize_input_text(str(body.get("session_id", "practice_session")), max_length=64) or "practice_session"
+    practice_id = sanitize_input_text(str(body.get("practice_id", "")), max_length=128)
+    subject = sanitize_input_text(str(body.get("subject", "Mathematics")), max_length=64)
+    misconception = sanitize_input_text(str(body.get("misconception", "M1_add_across")), max_length=64)
+    answer = str(body.get("answer", "")).strip()
+
+    if not practice_id or not answer:
+        return jsonify({"error": "Practice ID and answer are required."}), 400
+
+    if subject.lower() in {"python", "coding", "programming", "computer science", "cs"}:
+        from backend.python_debugger import python_debugger
+        _, metadata = python_debugger.analyze_and_explain(answer)
+        correct = metadata.get("status") == "code_executes_cleanly"
+        from backend.practice import _code_solution
+        reference_code = str(body.get("reference_code", ""))
+        correct_code, explanation = _code_solution(reference_code, misconception)
+        details = {
+            "metadata": metadata,
+            "correct_code": correct_code,
+            "explanation": explanation,
+        }
+    else:
+        correct_answer = sanitize_math_answer(str(body.get("correct_answer", "")))
+        correct, parsed = backend_code.check_answer(sanitize_math_answer(answer), correct_answer)
+        details = {
+            "student_parsed": backend_code.format_fraction(parsed) if parsed else answer,
+            "correct_answer": correct_answer,
+            "explanation": (
+                "Find a common denominator, scale each numerator by the same factor, "
+                "then add the numerators and reduce the fraction."
+            ),
+        }
+
+    backend_code.log_practice_attempt(
+        learner_id=learner_id,
+        session_id=session_id,
+        practice_id=practice_id,
+        subject=subject,
+        misconception=misconception,
+        correct=correct,
+    )
+    return jsonify({
+        "correct": correct,
+        "practice_id": practice_id,
+        "misconception": misconception,
+        "progress": backend_code.get_practice_progress(learner_id),
+        **details,
+    })
 
 
 @app.post("/api/llm/feedback")

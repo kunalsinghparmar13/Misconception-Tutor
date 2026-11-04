@@ -159,6 +159,16 @@ def test_llm_socratic_response_format():
     assert res["sample_id"].startswith("samp_")
 
 
+def test_llm_defaults_to_published_huggingface_adapter():
+    assert llm_engine.adapter_source == "kunalsinghparmar/misconception-tutor-gemma4-e4b"
+
+
+def test_tutor_notebook_is_present():
+    from pathlib import Path
+    notebook = Path(__file__).parents[1] / "LLM" / "tutor-project.ipynb"
+    assert notebook.exists()
+
+
 def test_training_sample_logging_and_feedback():
     sample_id = llm_engine.log_training_sample(
         subject="Mathematics",

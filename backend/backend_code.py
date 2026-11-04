@@ -467,6 +467,19 @@ def init_db(db_path: Optional[str] = None) -> None:
                 PRIMARY KEY (learner_id, misc_id)
             );
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS practice_attempts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                learner_id TEXT,
+                session_id TEXT,
+                ts TEXT,
+                practice_id TEXT,
+                subject TEXT,
+                misconception TEXT,
+                correct INTEGER
+            );
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_practice_learner ON practice_attempts(learner_id, subject, misconception);")
     conn.close()
 
 
@@ -542,6 +555,68 @@ def get_bkt_masteries(learner_id: str, db_path: Optional[str] = None) -> Dict[st
     rows = cur.fetchall()
     conn.close()
     return {r["misc_id"]: float(r["p_mastery"]) for r in rows}
+
+
+def log_practice_attempt(
+    learner_id: str,
+    session_id: str,
+    practice_id: str,
+    subject: str,
+    misconception: str,
+    correct: bool,
+    db_path: Optional[str] = None,
+) -> None:
+    """Persist targeted-practice outcomes for longitudinal progress evidence."""
+    init_db(db_path)
+    conn = get_connection(db_path)
+    with conn:
+        conn.execute(
+            """
+            INSERT INTO practice_attempts
+                (learner_id, session_id, ts, practice_id, subject, misconception, correct)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                learner_id,
+                session_id,
+                datetime.utcnow().isoformat(),
+                practice_id,
+                subject,
+                misconception,
+                int(bool(correct)),
+            ),
+        )
+    conn.close()
+
+
+def get_practice_progress(learner_id: str, db_path: Optional[str] = None) -> Dict[str, Any]:
+    """Return accuracy and attempt counts grouped by subject and misconception."""
+    init_db(db_path)
+    conn = get_connection(db_path)
+    rows = conn.execute(
+        """
+        SELECT subject, misconception, COUNT(*) AS attempts,
+               SUM(correct) AS correct, AVG(correct) AS accuracy
+        FROM practice_attempts
+        WHERE learner_id = ?
+        GROUP BY subject, misconception
+        ORDER BY subject, misconception
+        """,
+        (learner_id,),
+    ).fetchall()
+    conn.close()
+    return {
+        "records": [
+            {
+                "subject": row["subject"],
+                "misconception": row["misconception"],
+                "attempts": int(row["attempts"]),
+                "correct": int(row["correct"] or 0),
+                "accuracy": round(float(row["accuracy"] or 0.0), 4),
+            }
+            for row in rows
+        ]
+    }
 
 
 def compute_bug_rates(learner_id: str, db_path: Optional[str] = None) -> Dict[str, List[float]]:

@@ -54,7 +54,22 @@ class LLMEngine:
 
     @property
     def base_model(self) -> str:
-        return os.getenv("LLM_BASE_MODEL", "unsloth/gemma-4-E4B-it-unsloth-bnb-4bit")
+        default_model = "unsloth/gemma-4-E4B-it-unsloth-bnb-4bit"
+        return os.getenv("LLM_BASE_MODEL", default_model)
+
+    @property
+    def adapter_source(self) -> str:
+        """Prefer a notebook-exported adapter, then the published HF adapter."""
+        notebook_adapter = os.getenv(
+            "LLM_NOTEBOOK_ADAPTER_PATH",
+            str(LLM_DIR / "gemma4-e4b-math-code-lora"),
+        )
+        if Path(notebook_adapter).is_dir() and (Path(notebook_adapter) / "adapter_config.json").exists():
+            return notebook_adapter
+        return os.getenv(
+            "LLM_ADAPTER_ID",
+            "kunalsinghparmar/misconception-tutor-gemma4-e4b",
+        )
 
     def _init_storage(self) -> None:
         """Ensures the training data directories and files are initialized."""
@@ -65,7 +80,7 @@ class LLMEngine:
 
     def status(self) -> Dict[str, Any]:
         """Returns the readiness status of the LLM system."""
-        configured = (self.adapter_dir / "adapter_config.json").exists()
+        configured = (self.adapter_dir / "adapter_config.json").exists() or bool(self.adapter_source)
         dependencies_installed = False
         dep_error = None
         try:
@@ -92,7 +107,8 @@ class LLMEngine:
             "loaded": self._model is not None,
             "available": True,  # Cognitive Socratic Engine ensures 100% availability
             "liveAiEnabled": True,
-            "model": self.base_model,
+            "model": self.adapter_source,
+            "baseModel": self.base_model,
             "activeCheckpoint": self.active_checkpoint,
             "trainingSamplesCollected": dataset_size,
             "mode": active_mode,
@@ -108,25 +124,25 @@ class LLMEngine:
         with self._lock:
             if self._model is not None:
                 return True
-            adapter_config = self.adapter_dir / "adapter_config.json"
-            if not adapter_config.exists():
+            adapter_source = os.getenv("LLM_ADAPTER_PATH", self.adapter_source)
+            is_local = Path(adapter_source).exists()
+            adapter_config = Path(adapter_source) / "adapter_config.json" if is_local else None
+            if is_local and not adapter_config.exists():
                 return False
             try:
                 from peft import AutoPeftModelForCausalLM
                 from transformers import AutoTokenizer
 
-                safetensor_file = self.adapter_dir / "adapter_model.safetensors"
-                if not safetensor_file.exists() or safetensor_file.stat().st_size < 1000:
+                safetensor_file = Path(adapter_source) / "adapter_model.safetensors"
+                if is_local and (not safetensor_file.exists() or safetensor_file.stat().st_size < 1000):
                     # LFS pointer file or unsmudged weights
                     self.error = "PEFT adapter weights are in Git LFS pointer format. Using cognitive Socratic runtime."
                     return False
 
-                self._tokenizer = AutoTokenizer.from_pretrained(
-                    str(self.adapter_dir), trust_remote_code=True
-                )
+                self._tokenizer = AutoTokenizer.from_pretrained(adapter_source, trust_remote_code=True)
                 self._model = AutoPeftModelForCausalLM.from_pretrained(
-                    str(self.adapter_dir),
-                    device_map="auto",
+                    adapter_source,
+                    device_map=os.getenv("LLM_DEVICE_MAP", "auto"),
                     torch_dtype="auto",
                     low_cpu_mem_usage=True,
                     trust_remote_code=True,
@@ -134,7 +150,7 @@ class LLMEngine:
                 self._model.eval()
                 return True
             except Exception as exc:
-                self.error = f"PEFT adapter fallback activated: {exc}"
+                self.error = f"HF PEFT adapter fallback activated ({adapter_source}): {exc}"
                 return False
 
     def answer_socratic(
