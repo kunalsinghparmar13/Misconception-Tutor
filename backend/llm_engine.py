@@ -115,6 +115,7 @@ class LLMEngine:
             "tools": [t.name for t in tool_registry.list_tools()],
             "ecc_provider": ecc_provider,
             "error": self.error or dep_error,
+            "modelOnly": os.getenv("LLM_ONLY_MODEL", "").lower() in {"1", "true", "yes"},
         }
 
     def _try_load_peft(self) -> bool:
@@ -230,7 +231,29 @@ class LLMEngine:
             except Exception as e:
                 self.error = f"PEFT generation error: {e}. Falling back to Cognitive Socratic Engine."
 
-        # 3. High-precision cognitive Socratic generator
+        # 3. Do not present deterministic output as the user's model when
+        # model-only mode is requested.
+        if os.getenv("LLM_ONLY_MODEL", "").lower() in {"1", "true", "yes"}:
+            reason = self.error or "The configured adapter could not be loaded."
+            return {
+                "answer": (
+                    "### Model unavailable\n\n"
+                    "Your Gemma adapter was not used for this answer. "
+                    f"Runtime reason: {reason}\n\n"
+                    "Run this app on a CUDA machine with the notebook-compatible "
+                    "Unsloth/PEFT stack, then try again."
+                ),
+                "model": self.adapter_source,
+                "sample_id": "",
+                "metadata": {
+                    "source": "model_unavailable",
+                    "adapter": self.adapter_source,
+                    "error": reason,
+                },
+                "status": "model_unavailable",
+            }
+
+        # 4. High-precision cognitive Socratic generator
         ans_text, metadata = self._generate_cognitive_socratic(subject, question, mode)
         sample_id = self.log_training_sample(
             subject=subject,
@@ -242,7 +265,7 @@ class LLMEngine:
         )
         return {
             "answer": ans_text,
-            "model": f"Gemma-4B Socratic Tutor ({self.active_checkpoint})",
+            "model": f"Deterministic Cognitive Socratic Engine ({self.active_checkpoint})",
             "sample_id": sample_id,
             "metadata": metadata,
             "status": "success",

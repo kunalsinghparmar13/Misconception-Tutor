@@ -101,6 +101,9 @@ adapter. You can also point to another notebook export with
 The published adapter uses a 4-bit `bitsandbytes` base model and requires a
 GPU with enough memory for local inference. On CPU-only macOS, the app remains
 available through its verified Cognitive Socratic fallback rather than failing.
+Set `LLM_ONLY_MODEL=1` when you want strict model-only behavior: the app will
+return a clear model-unavailable response instead of using the deterministic
+fallback.
 
 ---
 

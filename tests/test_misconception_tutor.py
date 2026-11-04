@@ -169,6 +169,11 @@ def test_tutor_notebook_is_present():
     assert notebook.exists()
 
 
+def test_fallback_is_not_labeled_as_gemma():
+    response = llm_engine.answer_socratic("Python", "print(2 + 2)")
+    assert response["model"].startswith("Deterministic Cognitive Socratic Engine")
+
+
 def test_training_sample_logging_and_feedback():
     sample_id = llm_engine.log_training_sample(
         subject="Mathematics",
