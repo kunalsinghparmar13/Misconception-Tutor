@@ -9,6 +9,22 @@ from backend import backend_code
 
 
 CODE_PRACTICE: Dict[str, List[Dict[str, str]]] = {
+    "PostDivisionAdjustment": [
+        {"prompt": "Keep only the quotient when calculating the rate.", "code": "total = 20\ncount = 4\nrate = total / count + 2"},
+        {"prompt": "Remove the unintended correction from the average.", "code": "score = 45\nstudents = 4\naverage = score / students - 1"},
+        {"prompt": "Check the formula before applying the final adjustment.", "code": "distance = 100\ntime = 4\nspeed = distance / time + 5"},
+        {"prompt": "Calculate the unit value without changing the quotient.", "code": "points = 30\nquestions = 6\nper_question = points / questions - 2"},
+        {"prompt": "Use the division result directly for the ratio.", "code": "wins = 8\ngames = 10\nratio = wins / games + 1"},
+        {"prompt": "Fix the total-per-person calculation.", "code": "total = 72\npeople = 8\nshare = total / people - 3"},
+    ],
+    "AverageFormulaAdjustment": [
+        {"prompt": "Remove the extra subtraction from the average.", "code": "total_score = 45\nnum_students = 4\naverage = total_score / num_students - 1"},
+        {"prompt": "Compute the standard average.", "code": "total_score = 80\nnum_students = 5\naverage = total_score / num_students + 2"},
+        {"prompt": "Use total divided by count for the mean.", "code": "total_score = 36\nnum_students = 4\naverage = total_score / num_students - 0.5"},
+        {"prompt": "Do not alter the quotient after division.", "code": "total_score = 100\nnum_students = 10\naverage = total_score / num_students + 1"},
+        {"prompt": "Correct the average expression.", "code": "total_score = 63\nnum_students = 7\naverage = total_score / num_students - 2"},
+        {"prompt": "Calculate the mean without an extra adjustment.", "code": "total_score = 24\nnum_students = 3\naverage = total_score / num_students + 4"},
+    ],
     "SyntaxError": [
         {"prompt": "Add the missing colon so this function runs.", "code": "def greet(name)\n    return f'Hello {name}'"},
         {"prompt": "Fix the missing colon in the conditional.", "code": "score = 72\nif score >= 60\n    print('pass')"},
@@ -113,6 +129,13 @@ def _code_solution(code: str, misconception: str) -> tuple[str, str]:
     if misconception == "IndexOutOfBounds":
         fixed = re.sub(r"range\(len\(([^)]+)\)\)", r"range(len(\1) - 1)", code)
         return fixed, "An index plus one is valid only before the final element, so stop the loop one position earlier."
+    if misconception in {"PostDivisionAdjustment", "AverageFormulaAdjustment"}:
+        fixed = re.sub(
+            r"(?m)^(\s*\w+\s*=\s*[^#\n]+/\s*[^#\n]+?)\s*[+-]\s*(?:\d+(?:\.\d*)?|\.\d+)\s*$",
+            r"\1",
+            code,
+        )
+        return fixed, "Division is evaluated before the final adjustment; remove that adjustment when the intended value is the quotient or average."
     fixed = code.replace("denominator = 0", "denominator = 1")
     fixed = fixed.replace("count = 0", "count = 1")
     fixed = re.sub(r"'Items: '\s*\+\s*count", "f'Items: {count}'", fixed)
