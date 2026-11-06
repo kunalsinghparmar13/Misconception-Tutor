@@ -574,14 +574,6 @@ class LLMEngine:
             )
             return response, metadata
 
-        # Case 2b: Dynamic Equation & Problem Solving (Linear, Arbitrary Quadratic, Percentage, Arithmetic)
-        from backend.general_solver import general_solver
-        if (
-            general_solver.can_solve(question)
-            and ("=" in question or "%" in question or " of " in q_lower)
-        ):
-            return general_solver.solve_and_explain(question)
-
         # Case 3: Recursive Fibonacci / Stack Overflow
         if any(k in q_lower for k in ["fib", "recursion", "memoization", "recursionerror", "stack overflow"]):
             metadata["topic"] = "recursion_optimization"

@@ -20,11 +20,21 @@ class GeneralProblemSolver:
     def can_solve(self, text: str) -> bool:
         """Determines if the input is a solvable mathematical or algorithmic problem."""
         t_low = text.lower()
-        if any(w in t_low for w in ["solve", "calculate", "find", "what is", "evaluate", "simplify", "how much", "how many"]):
-            return True
-        if re.search(r"\d+\s*[\+\-\*\/\^\=]\s*\d+", text):
+        # Do not hijack specialized calculus, recursive programming, or fraction misconception problems
+        if any(w in t_low for w in ["integration by parts", "integral", "∫", "dx", "e^(-2x)", "recursion", "memoization", "grid", "fib"]):
+            return False
+        # Do not hijack fraction addition/division comparison questions like "1/4 + 1/6 = 1/5"
+        if re.search(r"\d+\s*/\s*\d+\s*[\+\-\*\/÷]\s*\d+\s*/\s*\d+", text):
+            return False
+        if re.search(r"[a-z]\s*(?:\^2|²)", text, re.IGNORECASE) and "=" in text:
             return True
         if re.search(r"[a-z]\s*[\+\-\*\/]\s*\d+\s*=", text, re.IGNORECASE):
+            return True
+        if re.search(r"\d+(?:\.\d+)?\s*%\s*of\s*\d+", text, re.IGNORECASE):
+            return True
+        if re.search(r"[-+]?\d+(?:\.\d+)?\s*[\+\-\*\/]\s*[-+]?\d+(?:\.\d+)?", text):
+            return True
+        if any(w in t_low for w in ["solve", "calculate", "find", "what is", "evaluate", "simplify", "how much", "how many"]):
             return True
         return False
 
@@ -167,30 +177,127 @@ class GeneralProblemSolver:
         op = match.group(2)
         v2 = float(match.group(3))
 
-        if op == "+":
-            ans = v1 + v2
-            name = "Addition"
-        elif op == "-":
-            ans = v1 - v2
-            name = "Subtraction"
+        v1_str = f"{int(v1)}" if v1.is_integer() else f"{v1}"
+        v2_str = f"{int(v2)}" if v2.is_integer() else f"{v2}"
+
+        if op == "/":
+            if v2 == 0:
+                response = (
+                    "### 🎯 Conceptual Understanding: Dividing by Zero\n\n"
+                    f"Let's look at what **${v1_str} \\div 0$** means in the physical world:\n\n"
+                    "#### 💡 The Intuition (The Sharing Metaphor)\n"
+                    f"Imagine you have **{v1_str} items** (like cookies or books), and you want to distribute them equally among **0 people**.\n"
+                    "- How many does each person receive? The question breaks down because there are no recipients to receive anything!\n"
+                    "- In mathematics, division is the inverse of multiplication: $a \\div b = c$ means $c \\times b = a$. If $b = 0$, what number multiplied by $0$ could ever give ${v1_str}$? None! Anything times $0$ is always $0$.\n\n"
+                    "### 📌 Key Takeaway\n"
+                    "Dividing by zero is mathematically **undefined** because no real number multiplied by zero can equal a non-zero dividend."
+                )
+                return response, meta
+
+            ans = v1 / v2
+            ans_clean = f"{int(ans)}" if ans.is_integer() else f"{ans:.4f}".rstrip("0").rstrip(".")
+
+            if v1 < v2:
+                comparison_text = "more people than items, so nobody receives a full whole item. Each person gets a fraction or equal slice."
+            elif v1 == v2:
+                comparison_text = "an equal number of items and people, so each person receives exactly 1 whole item."
+            else:
+                comparison_text = f"more items than people, so each person gets at least {int(ans)} full item(s) plus a remaining slice."
+
+            if v1 == 1.0 and v2 == 2.0:
+                decimal_bridge = (
+                    "\n#### 🧠 Connecting Fractions to Decimals\n"
+                    "Why is $\\frac{1}{2}$ written as **$0.5$** in decimal form?\n"
+                    "1. Think of $1.0$ as **$10$ tenths** (like ten 10¢ dimes making a whole \\$1.00).\n"
+                    "2. When you divide $10$ tenths equally between $2$ friends:\n"
+                    "   $$10 \\text{ tenths} \\div 2 = 5 \\text{ tenths} = \\mathbf{0.5}$$\n"
+                    "3. So half of a whole is always **$0.5$** (or $50\\%$ of the whole)!\n"
+                )
+            else:
+                decimal_bridge = (
+                    "\n#### 🧠 Connecting Fractions to Decimals\n"
+                    f"- Fraction form: **$\\frac{{{v1_str}}}{{{v2_str}}}$**\n"
+                    f"- Decimal evaluation: $${v1_str} \\div {v2_str} = \\mathbf{{{ans_clean}}}$$\n"
+                )
+
+            double_v1 = f"{int(v1*2)}" if (v1*2).is_integer() else f"{v1*2}"
+            response = (
+                "### 🎯 Conceptual Understanding: Division as Fair Sharing\n\n"
+                f"Let's explore what **${v1_str} \\div {v2_str}$** actually represents in the real world, rather than just treating it as a sterile number calculation.\n\n"
+                "#### 💡 The Intuition (The Fair Share Model)\n"
+                f"Imagine you have **{v1_str} whole pizza(s)** and you want to share them equally between **{v2_str} friends**:\n"
+                f"- Notice that there are {comparison_text}\n"
+                f"- To share fairly, you cut the total into equal portions. Each friend receives **$\\frac{{{v1_str}}}{{{v2_str}}}$** of a whole, which equals **${ans_clean}$**.\n"
+                f"{decimal_bridge}\n"
+                "#### 🤔 Think Socratic: Check Your Understanding\n"
+                f"> *If you were sharing **{double_v1} pizzas** among the same **{v2_str} friends**, how much would each person get? What happens to each share when you double the items?*\n\n"
+                "### 📌 Key Takeaway\n"
+                "Division is fundamentally **fair sharing** or **partitioning into equal groups**. When the numerator is smaller than the denominator, the result is always a fraction or decimal less than $1$."
+            )
+            return response, meta
+
         elif op == "*":
             ans = v1 * v2
-            name = "Multiplication"
-        else:
-            ans = v1 / v2 if v2 != 0 else float("inf")
-            name = "Division"
+            ans_clean = f"{int(ans)}" if ans.is_integer() else f"{ans:.4f}".rstrip("0").rstrip(".")
+            response = (
+                "### 🎯 Conceptual Understanding: Multiplication as Scaling & Groups\n\n"
+                f"Let's look at what **${v1_str} \\times {v2_str}$** represents conceptually!\n\n"
+                "#### 💡 The Intuition (The Grid & Array Model)\n"
+                f"Multiplication isn't just rote memorization—it represents **repeated groups** or the **area of a rectangle**:\n"
+                f"- Imagine a tiled courtyard with **{v1_str} rows**, and each row has **{v2_str} tiles**.\n"
+                f"- Instead of counting tiles one-by-one, you accumulate {v1_str} groups of {v2_str}:\n"
+                f"  $${v1_str} \\times {v2_str} = \\mathbf{{{ans_clean}}}$$\n\n"
+                "#### 🧠 Friendly Mental Math Strategy (Double & Halve)\n"
+                f"A great human mental math trick for multiplication is **Double and Halve**:\n"
+                f"- Halving one factor and doubling the other preserves the exact same area:\n"
+                f"  $$({v1/2:g}) \\times ({v2*2:g}) = \\mathbf{{{ans_clean}}}$$\n\n"
+                "#### 🤔 Think Socratic: Check Your Understanding\n"
+                f"> *Does reversing the order ($ {v2_str} \\times {v1_str} $) change the total? Why does a rectangle rotated 90 degrees maintain the exact same total area?*\n\n"
+                "### 📌 Key Takeaway\n"
+                "Multiplication is commutative ($A \\times B = B \\times A$) and associative. Visualizing problems as rectangular arrays makes arithmetic intuitive and eliminates memorization anxiety."
+            )
+            return response, meta
 
-        ans_str = f"{int(ans)}" if ans.is_integer() else f"{ans:.4f}"
+        elif op == "+":
+            ans = v1 + v2
+            ans_clean = f"{int(ans)}" if ans.is_integer() else f"{ans:.4f}".rstrip("0").rstrip(".")
+            response = (
+                "### 🎯 Conceptual Understanding: Addition as Combining Quantities\n\n"
+                f"Let's explore what **${v1_str} + {v2_str}$** means conceptually!\n\n"
+                "#### 💡 The Intuition (The Number Line)\n"
+                f"Addition is moving forward along the continuous number line:\n"
+                f"- Start at the position **{v1_str}**.\n"
+                f"- Take a leap forward of **{v2_str} units**.\n"
+                f"- You land directly on: $${v1_str} + {v2_str} = \\mathbf{{{ans_clean}}}$$\n\n"
+                "#### 🧠 Place Value & Grouping\n"
+                f"When combining numbers, we bundle identical units (ones with ones, tens with tens). "
+                f"Here, accumulating {v1_str} and {v2_str} yields **{ans_clean}**.\n\n"
+                "#### 🤔 Think Socratic: Check Your Understanding\n"
+                f"> *What is the inverse of addition? If ${v1_str} + {v2_str} = {ans_clean}$, what does ${ans_clean} - {v2_str}$ equal?*\n\n"
+                "### 📌 Key Takeaway\n"
+                "Addition combines discrete quantities or shifts forward on the number line. It is commutative ($A + B = B + A$)."
+            )
+            return response, meta
 
-        response = (
-            f"### 🔍 Arithmetic Evaluation: {name}\n\n"
-            f"**Expression:** ${v1} {op} {v2}$\n\n"
-            f"#### Calculation\n"
-            f"$${v1} {op} {v2} = \\mathbf{{{ans_str}}}$$\n\n"
-            f"### 📌 Key Takeaway\n"
-            f"Always observe operational precedence (PEMDAS/BODMAS) when chaining operations together."
-        )
-        return response, meta
+        else:  # Subtraction
+            ans = v1 - v2
+            ans_clean = f"{int(ans)}" if ans.is_integer() else f"{ans:.4f}".rstrip("0").rstrip(".")
+            signs_text = f"Since {v1_str} is smaller than {v2_str}, moving backward takes you past zero into negative territory: **{ans_clean}**." if v1 < v2 else f"Since {v1_str} is greater than or equal to {v2_str}, the remaining portion is positive: **{ans_clean}**."
+            response = (
+                "### 🎯 Conceptual Understanding: Subtraction as Distance & Difference\n\n"
+                f"Let's look at **${v1_str} - {v2_str}$** conceptually!\n\n"
+                "#### 💡 The Intuition (Distance Between Points)\n"
+                f"Subtraction measures either **removal** (taking away) or the **distance** between two values on a number line:\n"
+                f"- On a number line, how far apart are **{v1_str}** and **{v2_str}**?\n"
+                f"- Moving {v2_str} units backward from {v1_str} lands on: $${v1_str} - {v2_str} = \\mathbf{{{ans_clean}}}$$\n\n"
+                "#### 🧠 Signs & Direction\n"
+                f"{signs_text}\n\n"
+                "#### 🤔 Think Socratic: Check Your Understanding\n"
+                f"> *If you owed a friend \\${v2_str} and paid them \\${v1_str}, how much debt would you still have left?*\n\n"
+                "### 📌 Key Takeaway\n"
+                "Subtraction is the inverse of addition: $A - B = C$ means $C + B = A$. Thinking of subtraction as 'distance on the number line' makes handling negative numbers and signs second nature."
+            )
+            return response, meta
 
     def _solve_conceptual_problem(self, query: str, meta: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
         meta["problem_type"] = "conceptual_inquiry"
