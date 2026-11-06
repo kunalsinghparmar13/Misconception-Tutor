@@ -93,19 +93,23 @@ class GeneralProblemSolver:
         x_display = str(x_val.numerator) if x_val.denominator == 1 else f"{x_val.numerator}/{x_val.denominator}"
 
         response = (
-            f"### 🔍 Step-by-Step Solution: Linear Equation\n\n"
-            f"**Equation:** ${a}{var} {'+' if b >= 0 else '-'} {abs(b)} = {c}$\n\n"
-            f"#### Step 1: Isolate the Variable Term\n"
-            f"Subtract ${b}$ from both sides to cancel the constant:\n"
+            f"👋 **Hey! Let's solve this Linear Equation together!**\n\n"
+            f"We are working with: **${a}{var} {'+' if b >= 0 else '-'} {abs(b)} = {c}$**\n\n"
+            f"#### ⚖️ The Big Idea: The Balanced Scale\n"
+            f"Think of an algebraic equation like a balanced scale. Our mystery number `${var}$` is tucked inside a gift box on the left. "
+            f"Whatever we do to the left side, we do the exact same thing to the right side to keep the scale balanced.\n\n"
+            f"Our game plan: **unwrap `${var}$` step-by-step** using opposite (inverse) operations!\n\n"
+            f"#### 🧩 Step 1: Clear the Constant Term ({b:+d})\n"
+            f"Notice the `{b:+d}` on the left. To cancel it out, we subtract `{b}` from both sides:\n"
             f"$${a}{var} = {c} - ({b}) \\implies {a}{var} = {rhs_minus_b}$$\n\n"
-            f"#### Step 2: Divide by the Coefficient\n"
-            f"Divide both sides by ${a}$ to isolate ${var}$:\n"
+            f"#### ✂️ Step 2: Unwrap the Variable (Divide by {a})\n"
+            f"Now `${var}$` is being multiplied by `{a}`. The inverse of multiplying by `{a}` is dividing by `{a}`:\n"
             f"$${var} = \\frac{{{rhs_minus_b}}}{{{a}}} = \\mathbf{{{x_display}}}$$\n\n"
-            f"#### Step 3: Verification (Invariant Check)\n"
-            f"Substitute ${var} = {x_display}$ back into the original equation:\n"
-            f"$${a}({x_display}) + ({b}) = {a * float(x_val) + b:.2f} = {c}$$ ✓ The equality holds perfectly!\n\n"
-            f"### 📌 Key Takeaway\n"
-            f"To solve any linear equation $ax + b = c$, apply inverse operations in reverse PEMDAS order: first add/subtract the constant term, then divide by the coefficient."
+            f"#### 🔍 Step 3: Let's Check Our Work (The Verification)\n"
+            f"Let's plug ${var} = {x_display}$ right back into our starting equation:\n"
+            f"$${a}({x_display}) {'+' if b >= 0 else '-'} {abs(b)} = {a * float(x_val) + b:.2f} = {c}$$ ✓ The scale balances!\n\n"
+            f"#### 💡 Guiding Takeaway\n"
+            f"Whenever you solve a linear equation $ax + b = c$, apply inverse operations in reverse order: first undo addition/subtraction, then undo multiplication!"
         )
         return response, meta
 
@@ -124,7 +128,7 @@ class GeneralProblemSolver:
         discriminant = b**2 - 4 * a * c
 
         if discriminant < 0:
-            roots_desc = "Complex roots (discriminant $D < 0$)"
+            roots_desc = "Complex roots (Discriminant $D < 0$)"
         elif discriminant == 0:
             r = -b / (2 * a)
             roots_desc = f"One repeated real root: ${var} = {r:.2f}$"
@@ -134,17 +138,24 @@ class GeneralProblemSolver:
             roots_desc = f"Two distinct real roots: ${var}_1 = {r1:.2f}$ and ${var}_2 = {r2:.2f}$"
 
         response = (
-            f"### 🔍 Step-by-Step Solution: Quadratic Equation\n\n"
+            f"👋 **Let's solve this Quadratic Equation together!**\n\n"
             f"**Standard Form:** ${a}{var}^2 {'+' if b >= 0 else '-'} {abs(b)}{var} {'+' if c >= 0 else '-'} {abs(c)} = 0$\n\n"
-            f"#### Step 1: Identify Coefficients\n"
-            f"- $a = {a}, \\quad b = {b}, \\quad c = {c}$\n\n"
-            f"#### Step 2: Compute the Discriminant ($D = b^2 - 4ac$)\n"
-            f"$$D = ({b})^2 - 4({a})({c}) = {b**2} - ({4*a*c}) = \\mathbf{{{discriminant}}}$$\n\n"
-            f"#### Step 3: Apply the Quadratic Formula\n"
+            f"#### 🎢 The Big Idea: The Parabola Curve\n"
+            f"When you graph any quadratic equation, it traces a curved path called a **parabola**. "
+            f"Solving the equation simply means finding the exact spots where this curve crosses the ground ($x$-axis)!\n\n"
+            f"#### 🔍 Step 1: Identify the Three Coefficients\n"
+            f"- **$a = {a}$** (controls the steepness of the curve)\n"
+            f"- **$b = {b}$** (shifts the peak)\n"
+            f"- **$c = {c}$** (vertical intercept)\n\n"
+            f"#### 🔮 Step 2: The Fortune Teller: Discriminant ($D = b^2 - 4ac$)\n"
+            f"Before doing full calculations, mathematicians calculate the **Discriminant** ($D$) to preview what the solutions look like:\n"
+            f"$$D = ({b})^2 - 4({a})({c}) = {b**2} - ({4*a*c}) = \\mathbf{{{discriminant}}}$$\n"
+            f"- Since $D {' > 0' if discriminant > 0 else (' = 0' if discriminant == 0 else ' < 0')}$, our curve produces: **{roots_desc}**.\n\n"
+            f"#### 🧩 Step 3: Apply the Quadratic Formula\n"
             f"$${var} = \\frac{{-b \\pm \\sqrt{{D}}}}{{2a}} = \\frac{{-({b}) \\pm \\sqrt{{{discriminant}}}}}{{2({a})}}$$\n\n"
             f"**Roots:** {roots_desc}\n\n"
-            f"### 📌 Key Takeaway\n"
-            f"The sign of the discriminant determines the geometry of the parabola: $D > 0$ means two x-intercepts, $D = 0$ touches the axis once, and $D < 0$ never crosses the real axis."
+            f"#### 🎯 Think Socratic: Check Your Roots\n"
+            f"If you substitute either root back into the original equation, what should the result equal? Zero! That confirms your algebra is rock solid."
         )
         return response, meta
 
@@ -155,19 +166,22 @@ class GeneralProblemSolver:
         result = (pct / 100.0) * total
 
         response = (
-            f"### 🔍 Step-by-Step Solution: Percentage Calculation\n\n"
-            f"**Problem:** Find ${pct}\\%$ of ${total}$\n\n"
-            f"#### Step 1: Convert Percentage to a Ratio\n"
-            f"Recall that 'percent' means 'per one hundred' (divide by 100):\n"
+            f"👋 **Let's work through this Percentage Calculation together!**\n\n"
+            f"We want to find: **${pct}\\%$ of ${total}$**\n\n"
+            f"#### 💡 The Intuition: What Does 'Percent' Really Mean?\n"
+            f"The word **percent** comes from Latin *per centum*, which literally translates to **'out of every 100'** (just like 100 cents make one dollar). "
+            f"So ${pct}\\%$ means we take **${pct}$ parts for every $100$ in the total**.\n\n"
+            f"#### 🔢 Step 1: Turn the Percent into a Decimal or Fraction\n"
+            f"Divide by $100$:\n"
             f"$${pct}\\% = \\frac{{{pct}}}{{100}} = {pct / 100.0}$$\n\n"
-            f"#### Step 2: Multiply by the Total Value\n"
+            f"#### ✖️ Step 2: Multiply by the Total Value\n"
             f"$$\\text{{Result}} = {pct / 100.0} \\times {total} = \\mathbf{{{result:.2f}}}$$\n\n"
-            f"### 💡 Mental Math Shortcut\n"
-            f"To find ${pct}\\%$ easily:\n"
-            f"- $10\\%$ of {total} is {total * 0.1:.2f}\n"
-            f"- Scale by {pct/10:.1f} to quickly verify: $\\approx {result:.2f}$\n\n"
-            f"### 📌 Key Takeaway\n"
-            f"Percentages represent fractional proportions of a base value. Always divide by 100 before multiplying."
+            f"#### 🧠 Mental Math Bridge (The 10% Trick)\n"
+            f"Here is how human mathematicians calculate this in their heads at the store:\n"
+            f"- $10\\%$ of {total} is just moving the decimal left one spot: **{total * 0.1:.2f}**\n"
+            f"- Scale that up by {pct/10:.1f} to arrive at **{result:.2f}** without needing a calculator!\n\n"
+            f"#### 🎯 Quick Check for You\n"
+            f"What would $20\\%$ of {total} be? (Hint: Double the 10% amount!)"
         )
         return response, meta
 

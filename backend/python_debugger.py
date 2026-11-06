@@ -289,7 +289,7 @@ class PythonCodeDebugger:
         return run_student_code(code)
 
     def _format_syntax_explanation(self, code: str, err: Dict[str, Any]) -> str:
-        """Formats an intuitive Socratic diagnosis for syntax slips."""
+        """Formats an intuitive, warm Socratic diagnosis for syntax slips."""
         lines = code.splitlines()
         line_no = err["line"]
         bad_line = lines[line_no - 1] if 0 <= line_no - 1 < len(lines) else err.get("offending_line", "")
@@ -306,22 +306,25 @@ class PythonCodeDebugger:
         fixed_code = "\n".join(fixed_lines)
 
         return (
-            f"### 🔍 Syntax Slip Detected: {err['slip_type']}\n\n"
-            f"**File Location:** Line {line_no}, Column {err.get('column', 1)}\n\n"
+            f"👋 **Hey there! Let's take a look at your code together.**\n\n"
+            f"You are so close! Python ran into a small syntax slip right at **Line {line_no}**: **{err['slip_type']}**.\n\n"
             f"```python\n"
             f"{line_no} | {bad_line}\n"
             f"    {' ' * len(str(line_no))} {pointer}\n"
             f"```\n\n"
-            f"**What Python says:** `{err['type']}: {err['raw_message']}`\n\n"
-            f"**Why this happened:** {err['hint']}\n\n"
-            f"### 💡 Socratic Guidance\n"
-            f"Look at the end of line {line_no}. Before starting the indented code block that belongs inside this structure, did you notify Python where the header ends?\n\n"
-            f"### 🛠️ Corrected Python Code\n"
+            f"#### 💡 What Python is Thinking\n"
+            f"Python encountered: `{err['type']}: {err['raw_message']}`.\n\n"
+            f"Think of Python like a reader who relies on punctuation to know where one idea ends and instructions begin. "
+            f"When you write a header like `def`, `if`, `for`, or `while`, Python pauses at the end of the line waiting for a colon `:`.\n"
+            f"The colon is Python's green light that says: *'Header is complete—now get ready for the indented block of code inside!'*\n\n"
+            f"#### 🧠 Socratic Walkthrough: The Fix\n"
+            f"Look right at the end of Line {line_no}: `{bad_line}`.\n"
+            f"If you place that friendly colon `:` right at the end of the line, Python will understand immediately:\n\n"
             f"```python\n"
             f"{fixed_code}\n"
             f"```\n\n"
-            f"### 📌 Key Takeaway\n"
-            f"Python compound statements (`def`, `if`, `elif`, `else`, `for`, `while`, `try`, `except`, `class`) must always terminate with a colon `:` to introduce an indented suite."
+            f"#### 🎯 Check Your Understanding\n"
+            f"Do you see how headers in Python always end with a colon before indenting? Take a quick glance through the rest of your script to make sure all your function headers and loops have their `:`!"
         )
 
     def _format_semantic_explanation(self, code: str, bug: Dict[str, Any]) -> str:
@@ -424,56 +427,110 @@ class PythonCodeDebugger:
         )
 
     def _format_runtime_explanation(self, code: str, res: Dict[str, Any]) -> str:
-        """Formats explanation for runtime exceptions (TypeError, ZeroDivisionError, IndexError)."""
+        """Formats warm human pedagogical explanation for runtime exceptions."""
         line_no = res.get("line", 1)
         lines = code.splitlines()
         bad_line = lines[line_no - 1] if 0 <= line_no - 1 < len(lines) else ""
         err_type = res["error_type"]
         err_msg = res["error_message"]
 
-        fix_hint = "Ensure variables match expected types and divisors are non-zero."
-        fixed_code = code
         if err_type == "ZeroDivisionError":
-            fix_hint = "Check denominator before division: add a guard like `if denominator != 0:` to prevent dividing by zero."
+            analogy_section = (
+                "#### 🍪 Real-World Analogy: Sharing Cookies Among Friends\n"
+                "Imagine you have a plate of cookies and you want to share them equally with your friends:\n"
+                "- If you divide 10 cookies among 2 friends, each person gets 5 cookies.\n"
+                "- But what if there are **0 friends** in the room? How many cookies does each person get?\n\n"
+                "You can't distribute anything when nobody is there! In mathematics and in Python, dividing by zero doesn't produce an answer—it leaves math stranded. "
+                "That's why Python raises `ZeroDivisionError: division by zero`."
+            )
+            socratic_guidance = (
+                "Before performing any division, add a simple guard check to ensure your divisor isn't 0:\n"
+                "```python\n"
+                "if denominator != 0:\n"
+                "    result = numerator / denominator\n"
+                "else:\n"
+                "    print('Cannot divide by zero! Please provide a non-zero divisor.')\n"
+                "```"
+            )
+            check_question = "What should your program do when a user inputs 0? Should it prompt them again, or return a default placeholder?"
             fixed_code = "if denominator != 0:\n    result = numerator / denominator\nelse:\n    result = None  # handle the zero-denominator case"
+
         elif err_type == "TypeError" and "can only concatenate" in err_msg:
-            fix_hint = "Python does not automatically coerce integers to strings during concatenation. Wrap the value in `str(value)` or use an f-string: `f'Result: {value}'`."
+            analogy_section = (
+                "#### 🗣️ The Mental Model: Two Different Languages\n"
+                "Think of Python as speaking two distinct languages: **numbers (integers/floats)** and **words (strings)**.\n"
+                "When Python sees the `+` sign:\n"
+                "- Between numbers (`5 + 3`), it adds them up to make `8`.\n"
+                "- Between text (`'hello ' + 'world'`), it glues them together into `'hello world'`.\n"
+                "- But when it sees text AND a number (`'Items: ' + 5`), Python pauses! It doesn't want to guess whether you want math or words."
+            )
+            socratic_guidance = (
+                "We can tell Python explicitly to treat the number as text by wrapping it with `str(...)`, or even better, using a modern Python **f-string**:\n"
+                "```python\n"
+                "f'Items left: {count}'\n"
+                "```"
+            )
+            check_question = "Which one feels cleaner and easier to read for you: `'Items: ' + str(count)` or `f'Items: {count}'`?"
             fixed_code = re.sub(r"(['\"][^'\"]*['\"])\s*\+\s*(\w+)", r"f\1{\2}", code)
+
         elif err_type == "IndexError":
-            fix_hint = "The requested index is outside the length of the list. Remember Python lists are 0-indexed, so the valid indices are `0` to `len - 1`."
+            analogy_section = (
+                "#### 🏨 Real-World Analogy: Hotel Rooms with 0-Based Numbering\n"
+                "Picture a row of hotel rooms that start numbering at room **0** instead of room 1:\n"
+                "- 1st guest lives in **Room 0**\n"
+                "- 2nd guest lives in **Room 1**\n"
+                "- 3rd guest lives in **Room 2**\n\n"
+                "Because counting starts at 0, the very last room is always **one less than the total count** (`length - 1`).\n"
+                f"When your code asked Python for an index outside this range on line {line_no}, Python knocked on the door, saw nobody was there, and raised `IndexError: list index out of range`!"
+            )
+            socratic_guidance = (
+                "Whenever accessing items by position:\n"
+                "1. Check the collection length with `len(...)`.\n"
+                "2. Valid indices run from `0` to `len - 1`.\n"
+                "3. If you want the very last item without worrying about its index number, you can use Python's negative index trick: `items[-1]`!"
+            )
+            check_question = "If you have a list with 3 elements, what are the three valid index numbers you can query?"
             fixed_code = code + "\n# Guard an index before reading it: 0 <= index < len(items)"
 
+        else:
+            analogy_section = (
+                f"#### 💡 What Happened on Line {line_no}\n"
+                f"Python encountered an unexpected runtime state: `{err_type}: {err_msg}`."
+            )
+            socratic_guidance = "Inspect the values and types being evaluated right before this line, ensuring all preconditions are satisfied."
+            check_question = "What values did your variables hold right at the moment this operation took place?"
+            fixed_code = code
+
         return (
-            f"### 🔍 Runtime Exception: `{err_type}`\n\n"
-            f"**Trigger Line:** Line {line_no}\n"
+            f"👋 **Hey! Don't worry at all—every developer hits this roadblock! Let's understand what happened.**\n\n"
+            f"When Python reached **Line {line_no}**, it ran into a runtime bump: `{err_type}: {err_msg}`.\n\n"
             f"```python\n"
             f"{line_no} | {bad_line}\n"
             f"```\n\n"
-            f"**Runtime Exception:** `{err_type}: {err_msg}`\n\n"
-            f"### 💡 Root Cause Analysis\n"
-            f"{fix_hint}\n\n"
-            f"### 🛠️ Socratic Step-by-Step Fix\n"
-            f"1. Examine the variable values evaluated right before Line {line_no}.\n"
-            f"2. Add input validation or type casting before performing the operation.\n\n"
-            f"### 🛠️ Corrected Pattern\n"
-            f"```python\n{fixed_code}\n```\n\n"
-            f"### 📌 Key Takeaway\n"
-            f"Always guard against boundary inputs (empty lists, 0 denominators, mismatched types) before operations to build resilient Python software."
+            f"{analogy_section}\n\n"
+            f"#### 🧠 Let's Walk Through the Solution\n"
+            f"{socratic_guidance}\n\n"
+            f"#### 🛠️ Corrected Pattern\n"
+            f"```python\n"
+            f"{fixed_code}\n"
+            f"```\n\n"
+            f"#### 🎯 Check Your Understanding\n"
+            f"{check_question}"
         )
 
     def _format_clean_code_explanation(self, code: str, res: Dict[str, Any]) -> str:
-        """Explains clean code execution trace and outputs."""
+        """Explains clean code execution trace and outputs with warm human enthusiasm."""
         stdout = res.get("stdout", "").strip()
-        stdout_display = f"\n**Execution Output (`stdout`):**\n```text\n{stdout}\n```\n" if stdout else ""
+        stdout_display = f"\n**Program Output:**\n```text\n{stdout}\n```\n" if stdout else ""
         return (
-            f"### ✅ Code Compiles & Executes Successfully!\n\n"
-            f"Your Python code was parsed, compiled, and executed cleanly with 0 syntax or runtime exceptions.{stdout_display}\n"
-            f"### 🔍 Execution Architecture\n"
-            f"1. **Syntax & AST Structure**: All statements are valid Python 3 syntax with balanced delimiters.\n"
-            f"2. **State & Scoping**: Variables are initialized before reference, and no global state leaks were observed.\n"
-            f"3. **Efficiency**: Control flow terminates cleanly without redundant loops.\n\n"
-            f"### 📌 Key Takeaway\n"
-            f"Writing clean Python with clear function boundaries and type hints makes debugging straightforward and production deployments robust."
+            f"🎉 **Awesome job! Code Compiles & Executes Successfully!**\n\n"
+            f"I ran your Python code in our safe sandbox, and it executed smoothly from start to finish without a single error.{stdout_display}\n"
+            f"#### 🌟 What Made Your Code Work So Well:\n"
+            f"1. **Clean Syntax**: Every loop, parenthesis, and colon was placed right where it belongs.\n"
+            f"2. **Predictable State Flow**: Variables were properly initialized before use, and data flowed cleanly without side effects.\n"
+            f"3. **Smooth Execution**: Python followed your instructions seamlessly without hitting boundary or type hiccups.\n\n"
+            f"#### 🚀 Next Step Challenge\n"
+            f"Now that this foundation works, how might you expand it? Try experimenting with edge cases or passing unexpected input types to see how resilient it is!"
         )
 
 
