@@ -1,4 +1,9 @@
 """
+!!! SIMULATION ONLY - NOT USED BY THE RUNNING APP !!!
+Loss values below are generated with random noise; no model weights are ever updated.
+The app does not start this module (POST /api/llm/train returns 410). Real training
+happens in LLM/tutor-project.ipynb on a GPU notebook.
+
 ================================================================================
 AI That Teaches: Misconception Tutor — Continuous Fine-Tuning Orchestrator
 Processes collected student interaction data, runs training steps, updates checkpoints,
@@ -13,7 +18,7 @@ import os
 import random
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -189,7 +194,7 @@ class ContinuousTrainer:
                 "global_step": self.current_step,
                 "epochs_completed": round(self.current_epoch, 2),
                 "final_loss": self.current_loss,
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             }
             with open(RUN_INFO_PATH, "w", encoding="utf-8") as f:
                 json.dump(run_info, f, indent=2)
@@ -212,7 +217,7 @@ class ContinuousTrainer:
             "loss": self.current_loss,
             "log_history": self.history[-30:],
             "total_flos": 5.8e16,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
         }
         with open(target_dir / "trainer_state.json", "w", encoding="utf-8") as f:
             json.dump(state, f, indent=2)

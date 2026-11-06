@@ -13,7 +13,7 @@ import os
 import re
 import sys
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -21,6 +21,9 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
+# ``LLM/tutor_agents`` is the four-agent package (deliberately not importable as "llm").
+if str(ROOT / "LLM") not in sys.path:
+    sys.path.insert(0, str(ROOT / "LLM"))
 
 from llm.core.types import Message, Role  # noqa: E402
 from llm.prompt.builder import PromptBuilder, PromptConfig  # noqa: E402
@@ -28,9 +31,26 @@ from backend.tools import math_tool_executor, tool_registry  # noqa: E402
 
 LLM_DIR = ROOT / "LLM"
 DATA_DIR = ROOT / "data"
-TRAINING_DATA_DIR = LLM_DIR / "data"
+TRAINING_DATA_DIR = Path(os.getenv("TUTOR_TRAINING_DIR") or (LLM_DIR / "data"))
 
 TRAINING_DATASET_PATH = TRAINING_DATA_DIR / "continuous_training_dataset.jsonl"
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def model_only() -> bool:
+    """True unless LLM_ONLY_MODEL is explicitly turned off.
+
+    In model-only mode every learner-facing word comes from the fine-tuned model; if it
+    cannot be reached the API answers 503 instead of substituting canned text.
+    """
+    return os.getenv("LLM_ONLY_MODEL", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def agents_pipeline_enabled() -> bool:
+    return os.getenv("LLM_PIPELINE", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 
 class LLMEngine:
@@ -46,11 +66,12 @@ class LLMEngine:
 
     @property
     def active_checkpoint(self) -> str:
+        """Latest checkpoint recorded by the notebook's training run (LLM/run_info.json)."""
         try:
-            from backend.trainer import continuous_trainer
-            return continuous_trainer.get_status().get("activeCheckpoint", "checkpoint-1003")
+            info = json.loads((LLM_DIR / "run_info.json").read_text(encoding="utf-8"))
+            return str(info.get("latest_checkpoint") or "checkpoint-unknown")
         except Exception:
-            return "checkpoint-1003"
+            return "checkpoint-unknown"
 
     @property
     def base_model(self) -> str:
@@ -126,11 +147,22 @@ class LLMEngine:
         if not TRAINING_DATASET_PATH.exists():
             self._seed_initial_training_samples()
 
+    def _agent_pipeline(self):
+        from tutor_agents import get_pipeline
+
+        return get_pipeline()
+
+    def agents_active(self) -> bool:
+        """Use the 4-agent pipeline when enabled and either configured or model-only."""
+        if not agents_pipeline_enabled():
+            return False
+        try:
+            return model_only() or self._agent_pipeline().client.configured
+        except Exception:
+            return False
+
     def status(self) -> Dict[str, Any]:
         """Returns the readiness status of the LLM system."""
-        configured = (self.adapter_dir / "adapter_config.json").exists() or bool(
-            self.adapter_source
-        ) or bool(self.remote_backend_url)
         dependencies_installed = False
         dep_error = None
         try:
@@ -142,22 +174,38 @@ class LLMEngine:
         except ImportError as exc:
             dep_error = f"PyTorch/PEFT not installed: {exc}"
 
-        dataset_size = self.get_training_sample_count()
-        ecc_provider = os.getenv("LLM_PROVIDER")
+        agent_status: Optional[Dict[str, Any]] = None
+        if self.agents_active():
+            try:
+                agent_status = self._agent_pipeline().status()
+            except Exception as exc:  # noqa: BLE001
+                agent_status = {"configured": False, "reachable": False, "mode": "none", "error": str(exc), "model": self.adapter_source}
 
-        remote_status = self._check_remote_backend_status() if self.remote_backend_url else None
-        is_remote_ready = bool(remote_status and remote_status.get("reachable", False))
-        is_loaded = (self._model is not None) or is_remote_ready
-
-        active_mode = "Cognitive Socratic Engine (Fine-tuned Gemma format)"
-        if self.remote_backend_url and is_remote_ready:
-            active_mode = f"Remote GPU LLM Backend ({self.remote_backend_url})"
-        elif ecc_provider:
-            active_mode = f"ECC Enterprise Provider ({ecc_provider})"
-        elif self._model:
-            active_mode = "PEFT Adapter (Gemma-4B)"
-
-        model_name = remote_status.get("model") if is_remote_ready else self.adapter_source
+        if agent_status is not None:
+            is_loaded = bool(agent_status.get("reachable"))
+            model_name = agent_status.get("model") or self.adapter_source
+            if is_loaded:
+                active_mode = f"Fine-tuned Gemma - 4-agent pipeline ({agent_status.get('mode')})"
+            else:
+                active_mode = "Model offline"
+            error = agent_status.get("error") or self.error
+            remote = {"reachable": is_loaded} if agent_status.get("mode") == "remote" else None
+            configured = bool(agent_status.get("configured"))
+        else:
+            remote_status = self._check_remote_backend_status() if self.remote_backend_url else None
+            is_remote_ready = bool(remote_status and remote_status.get("reachable", False))
+            is_loaded = (self._model is not None) or is_remote_ready
+            active_mode = "Cognitive Socratic Engine (deterministic fallback, not the fine-tuned model)"
+            if self.remote_backend_url and is_remote_ready:
+                active_mode = "Remote GPU LLM Backend"
+            elif os.getenv("LLM_PROVIDER"):
+                active_mode = f"ECC Enterprise Provider ({os.getenv('LLM_PROVIDER')})"
+            elif self._model:
+                active_mode = "PEFT Adapter (Gemma-4B)"
+            model_name = remote_status.get("model") if is_remote_ready else self.adapter_source
+            error = self.error or dep_error
+            remote = {"reachable": is_remote_ready} if self.remote_backend_url else None
+            configured = (self.adapter_dir / "adapter_config.json").exists() or bool(self.remote_backend_url)
 
         return {
             "configured": configured,
@@ -168,16 +216,14 @@ class LLMEngine:
             "model": model_name,
             "baseModel": self.base_model,
             "activeCheckpoint": self.active_checkpoint,
-            "trainingSamplesCollected": dataset_size,
+            "trainingSamplesCollected": self.get_training_sample_count(),
             "mode": active_mode,
+            "agents": agent_status,
             "tools": [t.name for t in tool_registry.list_tools()],
-            "ecc_provider": ecc_provider,
-            "remoteBackend": {
-                "url": self.remote_backend_url,
-                "reachable": is_remote_ready,
-            } if self.remote_backend_url else None,
-            "error": self.error or dep_error,
-            "modelOnly": os.getenv("LLM_ONLY_MODEL", "").lower() in {"1", "true", "yes"},
+            "ecc_provider": os.getenv("LLM_PROVIDER"),
+            "remoteBackend": remote,
+            "error": error,
+            "modelOnly": model_only(),
         }
 
     def _try_load_peft(self) -> bool:
@@ -299,13 +345,13 @@ class LLMEngine:
                     data["sample_id"] = sample_id
                     data["status"] = "success"
                     return data
-            elif resp.status_code == 503 and os.getenv("LLM_ONLY_MODEL", "").lower() in {"1", "true", "yes"}:
+            elif resp.status_code == 503 and model_only():
                 return resp.json()
             else:
                 self.error = f"Remote LLM at {url} returned HTTP {resp.status_code}: {resp.text[:200]}"
         except Exception as exc:
             self.error = f"Remote LLM connection to {url} failed: {exc}"
-            if os.getenv("LLM_ONLY_MODEL", "").lower() in {"1", "true", "yes"}:
+            if model_only():
                 return {
                     "answer": (
                         "### Remote LLM Backend Unavailable\n\n"
@@ -324,6 +370,75 @@ class LLMEngine:
                 }
         return None
 
+    def _unavailable_payload(self, exc: Exception) -> Dict[str, Any]:
+        self.error = str(exc)
+        public = getattr(exc, "public_message", "The tutor model is not reachable right now.")
+        return {
+            "answer": (
+                "### The tutor model is offline\n\n"
+                "Your fine-tuned model could not be reached, so no answer was generated "
+                "(the app never substitutes canned text for it).\n\n"
+                f"{public}\n\n"
+                "If you run this app: start the model server (see docs/DEPLOY_FREE.md) and set LLM_BACKEND_URL."
+            ),
+            "model": self._agent_pipeline().client.model_name,
+            "sample_id": "",
+            "metadata": {"source": "model_unavailable"},
+            "status": "model_unavailable",
+        }
+
+    def _finish_agent_result(
+        self, result: Dict[str, Any], subject: str, question: str, mode: str, learner_id: str
+    ) -> Dict[str, Any]:
+        review = result["review"]
+        sample_id = ""
+        if review["approved"]:  # only reviewer-approved output may become training data
+            sample_id = self.log_training_sample(
+                subject=subject,
+                instruction="Explain the learner's mistake and give the verified correct solution.",
+                user_input=question,
+                model_output=result["answer"],
+                learner_id=learner_id,
+                misconception=result["misconception"],
+                feedback="auto_verified" if review["verified"] else "unrated",
+                metadata={"source": "agent_pipeline", "mode": mode, "verified": review["verified"]},
+            )
+        return {
+            "answer": result["answer"],
+            "model": f"{result['model']} - {self.active_checkpoint}",
+            "sample_id": sample_id,
+            "status": "success",
+            "misconception": result["misconception"],
+            "practice_set": result["practice_set"],
+            "agents": {k: result[k] for k in ("grounding", "explanation", "solution", "review", "timings")},
+            "metadata": {"source": "agent_pipeline", "misconception": result["misconception"]},
+        }
+
+    def _answer_with_agents(self, subject: str, question: str, mode: str, learner_id: str) -> Dict[str, Any]:
+        from tutor_agents import ModelUnavailable
+
+        try:
+            result = self._agent_pipeline().run(question, subject)
+        except ModelUnavailable as exc:
+            return self._unavailable_payload(exc)
+        return self._finish_agent_result(result, subject, question, mode, learner_id)
+
+    def stream_agents(
+        self, subject: str, question: str, mode: str = "diagnostic", learner_id: str = "student_demo",
+        practice_count: Optional[int] = None,
+    ):
+        """Yield pipeline events (dicts); the final ``complete`` event carries the API payload."""
+        if not self.agents_active():
+            yield {"event": "error", "status": "model_unavailable",
+                   "message": "The four-agent pipeline is disabled (LLM_PIPELINE=0)."}
+            return
+        for event in self._agent_pipeline().stream(question, subject, practice_count=practice_count):
+            if event["event"] == "complete":
+                event = {"event": "complete", "result": self._finish_agent_result(event["result"], subject, question, mode, learner_id)}
+            elif event["event"] == "error":
+                self.error = event.get("message")  # public message only
+            yield event
+
     def answer_socratic(
         self,
         subject: str,
@@ -336,6 +451,10 @@ class LLMEngine:
         Utilizes remote LLM backend (Modal / HF Spaces), ECC multi-provider harness,
         local PEFT Gemma adapter, or Cognitive Socratic Engine.
         """
+        # 0. The four-agent pipeline (explain / solve / practice / review), all by the fine-tuned model.
+        if self.agents_active():
+            return self._answer_with_agents(subject, question, mode, learner_id)
+
         # 1. Try remote separate LLM backend if configured (e.g. Modal app, HF Space GPU, remote server)
         if self.remote_backend_url:
             remote_res = self._call_remote_backend(subject, question, mode, learner_id)
@@ -410,7 +529,7 @@ class LLMEngine:
 
         # 4. Do not present deterministic output as the user's model when
         # model-only mode is requested.
-        if os.getenv("LLM_ONLY_MODEL", "").lower() in {"1", "true", "yes"}:
+        if model_only():
             reason = self.error or "The configured adapter could not be loaded."
             return {
                 "answer": (
@@ -797,16 +916,16 @@ class LLMEngine:
         Stores an interaction pair in JSONL format for continuous fine-tuning.
         Returns unique sample ID.
         """
-        sample_id = f"samp_{int(datetime.utcnow().timestamp() * 1000)}"
+        sample_id = f"samp_{int(_utcnow().timestamp() * 1000)}"
         sample_record = {
             "id": sample_id,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": _utcnow().isoformat(),
             "learner_id": learner_id,
             "subject": subject,
             "instruction": instruction,
             "input": user_input,
             "output": model_output,
-            "misconception": misconception or metadata.get("misconception") if metadata else None,
+            "misconception": misconception or (metadata or {}).get("misconception"),
             "feedback": feedback or "unrated",
             "metadata": metadata or {},
         }
@@ -815,17 +934,6 @@ class LLMEngine:
         with self._lock:
             with open(TRAINING_DATASET_PATH, "a", encoding="utf-8") as f:
                 f.write(json.dumps(sample_record, ensure_ascii=False) + "\n")
-
-        # Automatic self-training trigger every 10 collected interactions
-        if os.getenv("AUTO_TRAIN_ENABLED", "1") == "1":
-            total = self.get_training_sample_count()
-            if total > 0 and total % 10 == 0:
-                try:
-                    from backend.trainer import continuous_trainer
-                    if not continuous_trainer.is_training:
-                        continuous_trainer.start_training_run()
-                except Exception as exc:
-                    print(f"Auto-train notice: {exc}")
 
         return sample_id
 
@@ -884,7 +992,7 @@ class LLMEngine:
         seeds = [
             {
                 "id": "samp_seed_01",
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": _utcnow().isoformat(),
                 "learner_id": "seed_student",
                 "subject": "Mathematics",
                 "instruction": "Diagnose the fraction addition mistake and explain the buggy rule.",
@@ -896,7 +1004,7 @@ class LLMEngine:
             },
             {
                 "id": "samp_seed_02",
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": _utcnow().isoformat(),
                 "learner_id": "seed_student",
                 "subject": "Mathematics",
                 "instruction": "Diagnose fraction addition where tops are added and bottoms multiplied.",
@@ -908,7 +1016,7 @@ class LLMEngine:
             },
             {
                 "id": "samp_seed_03",
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": _utcnow().isoformat(),
                 "learner_id": "seed_student",
                 "subject": "Mathematics",
                 "instruction": "Diagnose fraction division where student multiplied straight across.",
@@ -920,7 +1028,7 @@ class LLMEngine:
             },
             {
                 "id": "samp_seed_04",
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": _utcnow().isoformat(),
                 "learner_id": "seed_student",
                 "subject": "Mathematics",
                 "instruction": "Diagnose division where first fraction was inverted instead of second.",

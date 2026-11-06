@@ -24,7 +24,7 @@ import re
 import csv
 import random
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import lru_cache
 from fractions import Fraction
 from math import lcm
@@ -506,7 +506,7 @@ def log_attempt_db(
 ) -> None:
     """Logs student attempt and updates incremental BKT mastery in O(1) time."""
     init_db(db_path)
-    timestamp = ts or datetime.utcnow().isoformat()
+    timestamp = ts or datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
     conn = get_connection(db_path)
     with conn:
         conn.execute("""
@@ -590,7 +590,7 @@ def log_practice_attempt(
             (
                 learner_id,
                 session_id,
-                datetime.utcnow().isoformat(),
+                datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                 practice_id,
                 subject,
                 misconception,

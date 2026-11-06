@@ -8,3 +8,11 @@ data/tutor.db
 LLM/checkpoint-*
 LLM/data/continuous_training_dataset.jsonl
 tests
+LLM/adapter_model.safetensors
+LLM/tokenizer.json
+LLM/*.ipynb
+LLM/serve
+docs
+.github
+*.md
+!README.md

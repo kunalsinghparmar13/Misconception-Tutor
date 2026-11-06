@@ -1,54 +1,34 @@
-"""Deploy Misconception Tutor with persistent SQLite storage."""
+"""Serve the fine-tuned adapter as an OpenAI-compatible API on Modal (GPU, scales to zero).
+
+This is the *model* only. The light web app (Flask + UI) runs on any free CPU host and talks to
+this endpoint through LLM_BACKEND_URL / LLM_BACKEND_TOKEN.
+
+    pip install modal && modal setup
+    modal secret create tutor-model-secrets MODEL_SERVER_TOKEN=<long-random-string>
+    modal deploy modal_app.py
+    curl https://<your-workspace>--misconception-tutor-model-serve.modal.run/health
+
+Run ``git lfs pull`` first so LLM/adapter_model.safetensors is the real 139 MB file, not a pointer.
+Modal bills per second of GPU time from your monthly credits; check modal.com/pricing for the
+current free allowance.
+"""
 
 from pathlib import Path
+
 import modal
 
 ROOT = Path(__file__).resolve().parent
 
-APP_NAME = "misconception-tutor"
-
-ADAPTER_ID = "kunalsinghparmar/misconception-tutor-gemma4-e4b"
-
-BASE_MODEL = "unsloth/gemma-4-E4B-it-unsloth-bnb-4bit"
-
-DB_VOLUME_NAME = "misconception-tutor-data"
-
-db_volume = modal.Volume.from_name(
-    DB_VOLUME_NAME,
-    create_if_missing=True,
-)
-
-app = modal.App(APP_NAME)
+app = modal.App("misconception-tutor-model")
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
-    .apt_install("git")
-    .pip_install(
-        "flask",
-        "requests",
-        "pandas",
-        "scikit-learn",
-        "torch",
-        "transformers>=5.0.0",
-        "peft>=0.21.0",
-        "huggingface_hub>=0.30.0",
-        "bitsandbytes>=0.46.1",
-        "accelerate",
-    )
+    .pip_install("flask", "unsloth", "huggingface_hub")
     .add_local_dir(
-        ROOT,
-        "/root/misconception-tutor",
+        ROOT / "LLM",
+        "/root/LLM",
         copy=True,
-        ignore=[
-            ".git",
-            ".venv",
-            "__pycache__",
-            ".pytest_cache",
-            "*.db",
-            "*.db-*",
-            "LLM/checkpoint-*",
-            "LLM/data/continuous_training_dataset.jsonl",
-        ],
+        ignore=["checkpoint-*", "data", "*.ipynb", "*.md"],
     )
 )
 
@@ -57,41 +37,18 @@ image = (
     image=image,
     gpu="L4",
     timeout=900,
-    scaledown_window=300,
+    scaledown_window=300,  # keep the GPU warm for 5 minutes after the last request
     max_containers=1,
-    volumes={
-        "/mnt/tutor-data": db_volume,
-    },
-    env={
-        "PYTHONPATH": (
-            "/root/misconception-tutor/src:"
-            "/root/misconception-tutor"
-        ),
-        "LLM_ADAPTER_ID": ADAPTER_ID,
-        "LLM_BASE_MODEL": BASE_MODEL,
-        "LLM_ONLY_MODEL": "1",
-        "TUTOR_DB_PATH": "/mnt/tutor-data/tutor.db",
-        "MODAL_DB_VOLUME": DB_VOLUME_NAME,
-        "BACKEND_HOST": "0.0.0.0",
-        "PORT": "8000",
-    },
-    # Add the HF secret here if your base model or adapter
-    # requires authenticated access.
-    secrets=[
-        modal.Secret.from_name("huggingface-secret")
-    ],
+    secrets=[modal.Secret.from_name("tutor-model-secrets")],
+    env={"LLM_ADAPTER_PATH": "/root/LLM", "LLM_GEN_BACKEND": "unsloth"},
 )
-@modal.concurrent(max_inputs=1)
+@modal.concurrent(max_inputs=4)
 @modal.wsgi_app()
-def flask_app():
-    import os
+def serve():
     import sys
 
-    os.chdir("/root/misconception-tutor")
+    sys.path.insert(0, "/root/LLM")
+    from serve import model_server
 
-    sys.path.insert(0, "/root/misconception-tutor/src")
-    sys.path.insert(0, "/root/misconception-tutor")
-
-    from backend.api import app as web_app
-
-    return web_app
+    model_server.load_model()  # blocks until the adapter is on the GPU
+    return model_server.app

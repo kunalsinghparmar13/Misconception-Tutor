@@ -210,7 +210,7 @@ def test_api_static_routes(client):
 
     r_app = client.get("/app.js")
     assert r_app.status_code == 200
-    assert b"showResponse" in r_app.data
+    assert b"/api/tutor/stream" in r_app.data
 
 
 def test_api_health_and_status(client):
@@ -220,7 +220,8 @@ def test_api_health_and_status(client):
 
     r_status = client.get("/api/backend-status")
     assert r_status.status_code == 200
-    assert r_status.json["liveAiEnabled"] is True
+    # liveAiEnabled must reflect whether a model is really reachable, never a hardcoded True
+    assert r_status.json["liveAiEnabled"] == r_status.json["llmLoaded"]
 
 
 def test_api_problem_routes(client):

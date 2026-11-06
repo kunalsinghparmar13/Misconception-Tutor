@@ -5,8 +5,19 @@ services:
     plan: free
     region: oregon
     dockerfilePath: Dockerfile
+    healthCheckPath: /api/health
     envVars:
+      - key: APP_ENV
+        value: production
       - key: BACKEND_HOST
         value: 0.0.0.0
-      - key: AUTO_TRAIN_ENABLED
+      - key: LLM_ONLY_MODEL
         value: "1"
+      # Address of your model server (docs/DEPLOY_FREE.md). Set both in the Render dashboard.
+      - key: LLM_BACKEND_URL
+        sync: false
+      - key: LLM_BACKEND_TOKEN
+        sync: false
+      # Protects /api/llm/dataset*, /api/memory/sessions and /api/security/audit.
+      - key: ADMIN_TOKEN
+        generateValue: true

@@ -1,0 +1,3 @@
+# Dependencies for LLM/serve/model_server.py (needs an NVIDIA GPU, ~10 GB VRAM or more)
+flask>=3.0
+unsloth

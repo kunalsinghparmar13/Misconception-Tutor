@@ -43,7 +43,7 @@ This application seamlessly integrates all three core pillars into a single, coh
    - SQLite tracking database with Write-Ahead Logging (`WAL` mode) and incremental **Bayesian Knowledge Tracing (Corbett & Anderson 1995)**.
 
 2. **The Approved UI & UX (`UI and UX/`)**:
-   - Zero-dependency, responsive interface styled with Tailwind CSS, Geist font, JetBrains Mono, and Google Material Symbols.
+   - Responsive interface styled with Tailwind CSS (loaded from the Play CDN - for a fully production build, compile it with the Tailwind CLI), Geist font, JetBrains Mono, and Google Material Symbols.
    - Dynamic 4-view navigation:
      - 🎯 **Diagnostic Practice**: Interactive math problems, instant M1–M5 cognitive replay, Socratic explanations, and one-click targeted follow-up drills.
      - 💬 **Socratic AI Tutor**: Freeform math derivation and Python debugging with starter prompts (Quadratic factorization, Fibonacci recursion depth, Integration by parts, Nested loop IndexError).
@@ -54,7 +54,7 @@ This application seamlessly integrates all three core pillars into a single, coh
    - Loaded and managed by `backend/llm_engine.py` and `backend/trainer.py`.
    - Incorporates the fine-tuned Gemma LoRA adapter checkpoints (`checkpoint-500`, `checkpoint-923`).
    - Automatically logs every student attempt, diagnostic explanation, and feedback rating into `LLM/data/continuous_training_dataset.jsonl` formatted for instruction fine-tuning.
-   - Features a continuous training orchestrator (`/api/llm/train`) that simulates/executes gradient descent steps on collected interactions, reduces loss, and persists updated checkpoints (`checkpoint-live`).
+   - Collects reviewer-approved interactions as a dataset for a future fine-tune. `backend/trainer.py` is a simulation only; it does not train the model.
 
 ---
 
@@ -79,109 +79,52 @@ PYTHONPATH=src:. python3 -m backend.api
 ```
 Open **`http://localhost:8000`** in your browser.
 
-The tutor uses the Hugging Face PEFT adapter
-`kunalsinghparmar/misconception-tutor-gemma4-e4b` by default. To enable local
-model inference instead of the deterministic fallback, install the model runtime
-on a CUDA-capable machine:
+### The four-agent tutor
+
+Every answer comes from **your fine-tuned model** (`LLM/tutor-project.ipynb`; no new fine-tune is made), split into four agents in
+[`LLM/tutor_agents/`](LLM/tutor_agents):
+
+1. **Explainer** - why the answer is wrong and why the mistake happens.
+2. **Solver** - the correct maths answer or corrected code, checked with exact arithmetic or by running the code in a sandbox
+   (one automatic revision if the check fails).
+3. **Practice generator** - new problems targeting the same misconception; items proven wrong are dropped, and the server
+   keeps the answers so grading never trusts the browser.
+4. **Reviewer** - deterministic checks decide pass/fail; the model's critique is advisory. Only reviewer-approved
+   answers are logged as future training data.
+
+Endpoints: `POST /api/tutor` (JSON), `POST /api/tutor/stream` (NDJSON, one event per agent), `POST /api/practice/submit`,
+`GET /api/health`. If the model is unreachable the app returns 503, never canned text.
+
+The model runs as a separate server (`LLM/serve/model_server.py`, OpenAI-compatible). **See [`docs/DEPLOY_FREE.md`](docs/DEPLOY_FREE.md)
+for how to host it for free and deploy the app.**
 
 ```bash
-.venv/bin/python -m pip install -r requirements-gpu.txt
+# Run the app locally against a model server
+export LLM_BACKEND_URL=http://127.0.0.1:8001 LLM_BACKEND_TOKEN=dev
+MODEL_SERVER_TOKEN=dev LLM_ADAPTER_PATH=LLM python -m serve.model_server   # GPU machine, run inside LLM/
+PYTHONPATH=src:.:LLM python3 -m backend.api
 ```
 
-For an offline local adapter, set `LLM_ADAPTER_PATH=LLM`. To use another
-Hugging Face adapter, set `LLM_ADAPTER_ID=owner/repository`.
-
-The training notebook is [`LLM/tutor-project.ipynb`](LLM/tutor-project.ipynb).
-It fine-tunes the Gemma tutor on MathDial and coding data and exports an
-adapter directory named `gemma4-e4b-math-code-lora`. If that directory is
-placed under `LLM/`, the app automatically prefers it over the Hugging Face
-adapter. You can also point to another notebook export with
-`LLM_NOTEBOOK_ADAPTER_PATH=/path/to/adapter`.
-
-The published adapter uses a 4-bit `bitsandbytes` base model and requires a
-GPU with enough memory for local inference. On CPU-only macOS, the app remains
-available through its verified Cognitive Socratic fallback rather than failing.
-Set `LLM_ONLY_MODEL=1` when you want strict model-only behavior: the app will
-return a clear model-unavailable response instead of using the deterministic
-fallback.
-
-### Deploy the real model on Modal
-
-The repository includes [`modal_app.py`](modal_app.py), so you do not need to
-create that file manually. From the repository root, install and authenticate
-the Modal CLI, then deploy:
-
-```bash
-python3 -m pip install modal
-modal setup
-modal deploy modal_app.py
-```
-
-The deployment uses an L4 GPU, installs the CUDA-compatible inference stack,
-copies the application into the container, and sets the adapter/base-model
-pair used by the Kaggle fine-tune. Modal prints the public HTTPS URL after a
-successful deployment. Verify it with:
-
-```bash
-curl https://YOUR-MODAL-URL/api/health
-```
-
-The response must report `"modelOnly": true` and `"loaded": true`. If the
-Hugging Face repository is private or gated, create a Modal secret containing
-`HF_TOKEN` and add it to the function configuration before deploying.
+For UI/dev work without a GPU: `MODEL_BACKEND=stub` starts the model server with canned replies (not for real use).
 
 ---
 
-### Option B: Instant Worldwide Public HTTPS URL (Cloudflare Quick Tunnel — 100% Free)
-
-No domain, no port forwarding, and no credit card required:
-```bash
-# Terminal 1: Start the backend server
-PYTHONPATH=src:. python backend/api.py
-
-# Terminal 2: Expose via free Cloudflare Tunnel
-# Mac: brew install cloudflared
-# Windows: winget install --id Cloudflare.cloudflared
-# Linux: sudo apt-get install cloudflared
-cloudflared tunnel --url http://127.0.0.1:8000
-```
-It immediately gives a worldwide public HTTPS link (e.g. `https://xxxx.trycloudflare.com`) accessible from any laptop, phone, or evaluator device.
-
----
-
-### Option C: 24/7 Free Cloud Deployment on Hugging Face Spaces (Zero Credit Card)
-
-1. Create a free account at [Hugging Face](https://huggingface.co).
-2. Go to [huggingface.co/new-space](https://huggingface.co/new-space).
-3. Set **Space Name**: `misconception-tutor`
-4. Set **License**: `mit` or `apache-2.0`
-5. Select **Space SDK**: **Docker** (Blank)
-6. Choose **Public** (Free 2 vCPU · 16 GB RAM).
-7. Push this repository to Hugging Face:
-   ```bash
-   git remote add space https://huggingface.co/spaces/<YOUR_HF_USERNAME>/misconception-tutor
-   git push space main
-   ```
-   *The pre-configured `Dockerfile` and `README.md` metadata will automatically build and serve the application 24/7 with a persistent public URL!*
-
----
-
-### Option D: Docker & Docker Compose
+### Docker
 
 ```bash
 docker compose up --build
 ```
-The container builds in seconds and binds to `http://localhost:8000`.
+Binds to `http://localhost:8000`. Set `LLM_BACKEND_URL` / `LLM_BACKEND_TOKEN` in your environment first.
 
 ---
 
-## 🧪 Automated Test Suite (79 Tests Passing)
+## 🧪 Automated Test Suite
 
-Run the full end-to-end verification suite:
 ```bash
-PYTHONPATH=src:. pytest -v
+PYTHONPATH=src:.:LLM pytest -q      # 136 tests
 ```
-All **79 tests** pass in `< 0.2s`, verifying rational arithmetic, Brown & Burton buggy rules, Bayesian Knowledge Tracing, Python AST compilation, general problem solving, and OWASP security filters.
+Covers the maths engine, buggy rules, BKT, the sandbox, the four agents (with a fake model), the model server and the API.
+Real-GPU inference with the adapter and the Modal deployment are **not** covered by the tests.
 
 ---
 

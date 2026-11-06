@@ -66,40 +66,56 @@ def test_online_training_is_disabled():
     assert response.get_json()["status"] == "disabled"
 
 
-def test_remote_llm_backend_forwarding(monkeypatch):
-    import requests
+def _serve_stub_model():
+    """Run LLM/serve/model_server.py (stub backend) on a free port; return (url, shutdown)."""
+    import threading
 
-    class DummyResponse:
-        status_code = 200
-        headers = {"content-type": "application/json"}
+    from werkzeug.serving import make_server
 
-        def json(self):
-            return {
-                "answer": "### 🎯 Direct Guidance\nHere is your remote Gemma-4B explanation.",
-                "model": "Modal-L4-Gemma4B-Tutor",
-                "status": "success",
-                "metadata": {"topic": "fraction_addition", "misconception": "M1_add_across"},
-            }
+    from serve import model_server
 
-    monkeypatch.setenv("LLM_BACKEND_URL", "https://modal-gpu-tutor.test.run")
-    monkeypatch.setattr(requests, "post", lambda *args, **kwargs: DummyResponse())
+    model_server._state.update(backend=model_server._StubBackend(), error=None)
+    server = make_server("127.0.0.1", 0, model_server.app, threaded=True)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return f"http://127.0.0.1:{server.server_port}", server.shutdown
 
-    client = app.test_client()
-    response = client.post(
-        "/api/llm/answer",
-        json={
-            "question": "Why is 1/4 + 1/6 = 1/5 wrong?",
-            "subject": "Mathematics",
-            "learner_id": "remote_test_student",
-        },
-    )
 
-    assert response.status_code == 200
-    data = response.get_json()
-    assert "Direct Guidance" in data["answer"]
-    assert data["model"] == "Modal-L4-Gemma4B-Tutor"
-    assert "practice_set" in data
-    assert data["practice_set"]["count"] == 6
+def test_app_reaches_model_server_over_http(monkeypatch):
+    """LLM_BACKEND_URL points at an OpenAI-compatible server; the pipeline talks to it for real."""
+    from tutor_agents import ModelClient, TutorPipeline, set_pipeline
+
+    url, shutdown = _serve_stub_model()
+    try:
+        monkeypatch.setenv("LLM_BACKEND_URL", url)
+        client = ModelClient()
+        assert client.health()["reachable"] is True
+        assert client.chat([{"role": "user", "content": "hi"}], max_tokens=8).text.startswith("stub reply")
+
+        set_pipeline(TutorPipeline(client))
+        status = app.test_client().get("/api/backend-status").get_json()
+        assert status["llmLoaded"] is True
+    finally:
+        set_pipeline(None)
+        shutdown()
+
+
+def test_unreachable_model_returns_503_not_canned_text(monkeypatch):
+    from tutor_agents import ModelClient, TutorPipeline, set_pipeline
+
+    monkeypatch.setenv("LLM_BACKEND_URL", "http://127.0.0.1:9")  # nothing listens here
+    monkeypatch.setenv("LLM_BACKEND_TIMEOUT", "2")
+    set_pipeline(TutorPipeline(ModelClient()))
+    try:
+        res = app.test_client().post(
+            "/api/llm/answer",
+            json={"question": "Why is 1/4 + 1/6 = 1/5 wrong?", "subject": "Mathematics"},
+        )
+    finally:
+        set_pipeline(None)
+    assert res.status_code == 503
+    body = res.get_json()
+    assert body["status"] == "model_unavailable"
+    assert "offline" in body["answer"].lower()
 
 
 def test_generative_cognitive_socratic_for_python():

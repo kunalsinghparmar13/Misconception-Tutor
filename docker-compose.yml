@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   misconception-tutor:
     build: .
@@ -8,8 +6,12 @@ services:
       - "8000:8000"
     environment:
       - BACKEND_HOST=0.0.0.0
-      - BACKEND_PORT=8000
-      - PYTHONPATH=/app
+      - PORT=8000
+      # Model server (see docs/DEPLOY_FREE.md). Put these in a .env file next to this one.
+      - LLM_BACKEND_URL=${LLM_BACKEND_URL:-}
+      - LLM_BACKEND_TOKEN=${LLM_BACKEND_TOKEN:-}
+      - ADMIN_TOKEN=${ADMIN_TOKEN:-}
+      - TUTOR_DB_PATH=/app/data/tutor.db
     volumes:
       - ./data:/app/data
       - ./LLM/data:/app/LLM/data

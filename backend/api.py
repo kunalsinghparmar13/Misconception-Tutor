@@ -13,10 +13,11 @@ import csv
 import io
 import json
 import os
+import threading
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
-from flask import Flask, Response, jsonify, request, send_from_directory
+from flask import Flask, Response, jsonify, request, send_from_directory, stream_with_context
 
 from backend import backend_code
 from backend.llm_engine import llm_engine
@@ -27,6 +28,8 @@ from backend.memory.lifecycle import memory_lifecycle
 from backend.practice import classify_misconception, generate_practice_set
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT / "LLM") not in __import__("sys").path:  # the 4-agent package lives in LLM/tutor_agents
+    __import__("sys").path.insert(0, str(ROOT / "LLM"))
 UI_DIR = ROOT / "UI and UX"
 DATA_DIR = ROOT / "data"
 
@@ -94,12 +97,14 @@ def backend_status():
 
     return jsonify({
         "status": "online",
-        "liveAiEnabled": True,
+        "liveAiEnabled": bool(llm_stat["loaded"]),
         "model": llm_stat["model"],
         "llmLoaded": llm_stat["loaded"],
         "llmError": llm_stat["error"],
         "mode": llm_stat.get("mode"),
         "remoteBackend": llm_stat.get("remoteBackend"),
+        "agents": llm_stat.get("agents"),
+        "modelOnly": llm_stat.get("modelOnly"),
         "trainingMode": "offline_kaggle",
         "trainingSamplesCollected": (
             llm_stat["trainingSamplesCollected"]
@@ -356,33 +361,55 @@ def get_teacher_analytics():
 # SECTION 6: SOCRATIC LLM CHATBOT & CONTINUOUS TRAINING HUB
 # ==============================================================================
 
-@app.post("/api/llm/answer")
-def llm_answer():
-    """Handles freeform Socratic questions with OWASP prompt injection defense and logs training samples."""
-    body = request.get_json(silent=True) or {}
+_tutor_slots = threading.BoundedSemaphore(max(1, int(os.getenv("TUTOR_MAX_CONCURRENT", "2"))))
+
+
+def _prepare_tutor_request(body: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], Optional[Tuple[Response, int]]]:
+    """Validate + sanitize a tutoring request (shared by every tutor endpoint)."""
     raw_question = str(body.get("question", "")).strip()
     if not raw_question:
-        return jsonify({"error": "Enter a question before sending it."}), 400
+        return None, (jsonify({"error": "Enter a question before sending it."}), 400)
 
     # ECC Input Sanitization & OWASP Prompt Injection Detection
     question = sanitize_input_text(raw_question)
     scan_result = prompt_guard.scan(question)
     if not scan_result.is_safe:
-        return jsonify({
+        return None, (jsonify({
             "answer": "I am a dedicated Socratic Math Tutor designed to guide you through mathematical problem solving. I cannot process instruction override requests, system prompt inspections, or roleplay escapes. Let's focus on solving fractions and algebra!",
             "model": "ECC-Security-Guard (OWASP-Blocked)",
             "status": "refused_injection",
             "risk_level": scan_result.risk_level,
             "flagged_pattern": scan_result.flagged_pattern,
-        }), 400
+        }), 400)
 
-    subject = sanitize_input_text(str(body.get("subject", "Mathematics")), max_length=64)
-    mode = sanitize_input_text(str(body.get("mode", "diagnostic")), max_length=64)
-    learner_id = sanitize_input_text(str(body.get("learner_id", "student_demo")), max_length=64) or "student_demo"
+    try:
+        practice_count = int(body["practice_count"]) if body.get("practice_count") is not None else None
+    except (TypeError, ValueError):
+        return None, (jsonify({"error": "practice_count must be a number."}), 400)
+
+    return {
+        "question": question,
+        "subject": sanitize_input_text(str(body.get("subject", "Mathematics")), max_length=64),
+        "mode": sanitize_input_text(str(body.get("mode", "diagnostic")), max_length=64),
+        "learner_id": sanitize_input_text(str(body.get("learner_id", "student_demo")), max_length=64) or "student_demo",
+        "practice_count": practice_count,
+    }, None
+
+
+@app.post("/api/llm/answer")
+def llm_answer():
+    """Handles freeform Socratic questions with OWASP prompt injection defense and logs training samples."""
+    prepared, error = _prepare_tutor_request(request.get_json(silent=True) or {})
+    if error:
+        return error
+    question, subject = prepared["question"], prepared["subject"]
+    mode, learner_id = prepared["mode"], prepared["learner_id"]
 
     # ECC Memory Lifecycle: pre-observe intent
     memory_lifecycle.pre_observe(learner_id, question)
 
+    if not _tutor_slots.acquire(blocking=False):
+        return jsonify({"error": "The tutor is busy with other learners. Please retry in a few seconds."}), 429
     try:
         result = llm_engine.answer_socratic(
             subject=subject,
@@ -394,18 +421,60 @@ def llm_answer():
             return jsonify(result[0]), 503
         if result.get("status") == "model_unavailable":
             return jsonify(result), 503
-        metadata = result.get("metadata") or {}
-        misconception = classify_misconception(subject, question, metadata)
-        result["misconception"] = misconception
-        result["practice_set"] = result.get("practice_set") or generate_practice_set(subject, misconception, count=6)
+        if "agents" not in result:  # legacy deterministic path (LLM_ONLY_MODEL=0 only)
+            metadata = result.get("metadata") or {}
+            misconception = classify_misconception(subject, question, metadata)
+            result["misconception"] = misconception
+            result["practice_set"] = result.get("practice_set") or generate_practice_set(subject, misconception, count=6)
         return jsonify(result)
-    except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
+    except Exception:
+        app.logger.exception("llm_answer failed")
+        return jsonify({"error": "The tutor hit an unexpected error."}), 500
+    finally:
+        _tutor_slots.release()
+
+
+@app.post("/api/tutor")
+def tutor_agents_sync():
+    """Run the four agents and return one JSON document (see /api/tutor/stream for live progress)."""
+    return llm_answer()
+
+
+@app.post("/api/tutor/stream")
+def tutor_agents_stream():
+    """Newline-delimited JSON events: start, grounding, agent_start, agent_result, revision, complete/error."""
+    prepared, error = _prepare_tutor_request(request.get_json(silent=True) or {})
+    if error:
+        return error
+    memory_lifecycle.pre_observe(prepared["learner_id"], prepared["question"])
+    if not _tutor_slots.acquire(blocking=False):
+        return jsonify({"error": "The tutor is busy with other learners. Please retry in a few seconds."}), 429
+
+    def generate():
+        try:
+            for event in llm_engine.stream_agents(
+                prepared["subject"], prepared["question"], prepared["mode"], prepared["learner_id"],
+                practice_count=prepared["practice_count"],
+            ):
+                yield json.dumps(event, ensure_ascii=False) + "\n"
+        except Exception:
+            app.logger.exception("tutor stream failed")
+            yield json.dumps({"event": "error", "status": "error", "message": "The tutor hit an unexpected error."}) + "\n"
+        finally:
+            _tutor_slots.release()
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="application/x-ndjson",
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.post("/api/practice/submit")
 def submit_practice_attempt():
     """Grades one targeted math or Python practice item and records progress."""
+    from tutor_agents.pipeline import practice_store
+
     body = request.get_json(silent=True) or {}
     learner_id = sanitize_input_text(str(body.get("learner_id", "student_demo")), max_length=64) or "student_demo"
     session_id = sanitize_input_text(str(body.get("session_id", "practice_session")), max_length=64) or "practice_session"
@@ -417,25 +486,42 @@ def submit_practice_attempt():
     if not practice_id or not answer:
         return jsonify({"error": "Practice ID and answer are required."}), 400
 
+    # Items written by the Practice agent are graded against the server's own record, never
+    # against answers echoed back by the browser.
+    stored = practice_store.get(practice_id)
+    if stored:
+        subject = stored.get("subject", subject)
+
     if subject.lower() in {"python", "coding", "programming", "computer science", "cs"}:
-        from backend.python_debugger import python_debugger
-        _, metadata = python_debugger.analyze_and_explain(answer)
-        correct = metadata.get("status") == "code_executes_cleanly"
-        from backend.practice import _code_solution
-        reference_code = str(body.get("reference_code", ""))
-        correct_code, explanation = _code_solution(reference_code, misconception)
-        details = {
-            "metadata": metadata,
-            "correct_code": correct_code,
-            "explanation": explanation,
-        }
+        if stored and stored.get("type") == "code":
+            from backend.sandbox import run_student_code
+
+            run = run_student_code(answer)
+            expected = stored.get("expected_output")
+            produced = (run.get("stdout") or "").strip()
+            correct = bool(run.get("success")) and (expected is None or produced == expected)
+            details = {
+                "correct_code": stored.get("correct_code"),
+                "explanation": stored.get("explanation") or "",
+                "your_output": produced,
+                "expected_output": expected,
+                "error": None if run.get("success") else f"{run.get('error_type')}: {run.get('error_message')}",
+            }
+        else:
+            from backend.python_debugger import python_debugger
+            from backend.practice import _code_solution
+
+            _, metadata = python_debugger.analyze_and_explain(answer)
+            correct = metadata.get("status") == "code_executes_cleanly"
+            correct_code, explanation = _code_solution(str(body.get("reference_code", "")), misconception)
+            details = {"metadata": metadata, "correct_code": correct_code, "explanation": explanation}
     else:
-        correct_answer = sanitize_math_answer(str(body.get("correct_answer", "")))
+        correct_answer = sanitize_math_answer(str((stored or {}).get("correct_answer") or body.get("correct_answer", "")))
         correct, parsed = backend_code.check_answer(sanitize_math_answer(answer), correct_answer)
         details = {
             "student_parsed": backend_code.format_fraction(parsed) if parsed else answer,
             "correct_answer": correct_answer,
-            "explanation": (
+            "explanation": (stored or {}).get("explanation") or (
                 "Find a common denominator, scale each numerator by the same factor, "
                 "then add the numerators and reduce the fraction."
             ),

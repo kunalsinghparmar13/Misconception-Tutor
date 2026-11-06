@@ -10,7 +10,7 @@ Derived from ECC's memory-persistence hooks:
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -31,7 +31,7 @@ class MemoryPersistenceLifecycle:
         session_data = {
             "learner_id": learner_id,
             "session_id": session_id,
-            "start_time": datetime.utcnow().isoformat(),
+            "start_time": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             "interactions_count": 0,
             "observed_bugs": [],
         }
@@ -41,7 +41,7 @@ class MemoryPersistenceLifecycle:
     def pre_observe(self, learner_id: str, input_text: str) -> Dict[str, Any]:
         """Lifecycle hook before processing input: extracts preliminary intent signals."""
         return {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             "learner_id": learner_id,
             "char_count": len(input_text),
             "contains_math_operator": any(op in input_text for op in ["+", "-", "*", "/", "÷"]),
