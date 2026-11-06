@@ -37,7 +37,7 @@ image = (
     image=image,
     gpu="L4",
     timeout=900,
-    scaledown_window=300,  # keep the GPU warm for 5 minutes after the last request
+    scaledown_window=120,  # stay warm 2 min after the last request; shorter = fewer credits used
     max_containers=1,
     secrets=[modal.Secret.from_name("tutor-model-secrets")],
     env={"LLM_ADAPTER_PATH": "/root/LLM", "LLM_GEN_BACKEND": "unsloth"},

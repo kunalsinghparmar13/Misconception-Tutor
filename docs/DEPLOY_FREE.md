@@ -12,6 +12,16 @@ the app answers **503 "model offline"**; it does not make up canned text.
 
 Free GPU hosting changes often. Everything below was checked in Nov 2026, but confirm each platform's current terms.
 
+## Which free host should I use? (checked Nov 2026)
+
+| Host | Charges? | How long it stays up | Verdict |
+|---|---|---|---|
+| **Modal** | $0 on the Starter plan: $30 of free credit every month, billed per second, nothing while idle | Always reachable, wakes itself in about a minute | **Best primary.** Roughly 35-50 GPU-hours/month for an L4/T4-class GPU. A card may be requested at signup; set a **spending limit of $0** in Settings so you can never be charged |
+| **Kaggle + tunnel** | Never charges | Up to 12 h per session, about 30 GPU-hours/week, but you must start it by hand and the URL changes | **Best backup** (about 4x more free GPU time than Modal, zero billing risk) |
+| **HF ZeroGPU** | Free | Only ~3.5-5 GPU-minutes per day on free accounts, and Spaces hosting is tied to Gradio `@spaces.GPU` calls | **Not usable**: one tutor answer makes four model calls |
+
+Recommended: Modal for the live URL, Kaggle when the Modal credit runs out or for a long demo day.
+
 ## 1. Host the model
 
 ### Option A - Kaggle notebook + Cloudflare tunnel (free, temporary)
