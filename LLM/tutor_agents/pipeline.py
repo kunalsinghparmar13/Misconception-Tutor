@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import os
 import threading
 import time
@@ -48,6 +49,48 @@ class _BoundedStore:
 
 
 practice_store = _BoundedStore()
+practice_sessions = _BoundedStore(limit=1000)  # one entry per practice round (set_id)
+
+MASTERY_THRESHOLD = 0.8  # >= 80% of a round correct means the misconception is mastered: stop practising
+
+
+def _next_level(current: str, accuracy: float) -> str:
+    """Below 50%: one step easier. 50-79%: same difficulty, new problems. (>= 80% stops, see round_status)."""
+    ladder = ["easier", "same", "harder"]
+    base = "same" if current == "start" else current
+    idx = ladder.index(base) if base in ladder else 1
+    if accuracy < 0.5:
+        idx = max(0, idx - 1)
+    return ladder[idx]
+
+
+def round_status(session: Dict[str, Any]) -> Dict[str, Any]:
+    total = len(session["ids"])
+    results = session["results"]
+    answered = sum(1 for i in session["ids"] if i in results)
+    correct = sum(1 for i in session["ids"] if results.get(i))
+    complete = total > 0 and answered >= total
+    accuracy = (correct / total) if total else 0.0
+    mastered = complete and accuracy >= MASTERY_THRESHOLD
+    return {
+        "set_id": session["set_id"], "round": session["round"], "level": session["level"],
+        "total": total, "answered": answered, "correct": correct,
+        "accuracy": round(accuracy, 3), "threshold": MASTERY_THRESHOLD,
+        "complete": complete, "mastered": mastered,
+        "next_level": None if (mastered or not complete) else _next_level(session["level"], accuracy),
+    }
+
+
+def record_practice_result(set_id: str, practice_id: str, correct: bool, answer: str) -> Optional[Dict[str, Any]]:
+    """Record the learner's FIRST attempt at an item of a round; returns the round status."""
+    session = practice_sessions.get(set_id)
+    if not session or practice_id not in session["ids"]:
+        return None
+    with practice_sessions._lock:
+        if practice_id not in session["results"]:
+            session["results"][practice_id] = bool(correct)
+            session["answers"][practice_id] = (answer or "")[:400]
+    return round_status(session)
 
 
 def _ev(event: str, **kw: Any) -> Dict[str, Any]:
@@ -116,10 +159,18 @@ class TutorPipeline:
         cached = self._cache.get(cache_key) if self._cache_on else None
         if cached is not None:  # identical question answered recently: replay instantly, no model calls
             yield _ev("grounding", data=cached["grounding"])
+            # Fresh practice round (new ids, empty score) so a replay never inherits an earlier learner's answers.
+            replay_set = copy.deepcopy(cached["practice_set"])
+            new_id = f"pr_{uuid.uuid4().hex[:8]}"
+            for i, q in enumerate(replay_set.get("questions", []), start=1):
+                q["id"] = f"{new_id}_{i}"
+            self._open_round(replay_set, new_id, question, subject, replay_set.get("misconception", ""),
+                             round_no=1, level="start", history=[])
+            replayed = {**cached, "practice_set": replay_set}
             for agent, key in (("explainer", "explanation"), ("solver", "solution"), ("practice", "practice_set"), ("reviewer", "review")):
                 yield _ev("agent_start", agent=agent)
-                yield _ev("agent_result", agent=agent, data=cached[key])
-            yield _ev("complete", result={**cached, "cached": True, "timings": {"total": 0.0}})
+                yield _ev("agent_result", agent=agent, data=replayed[key])
+            yield _ev("complete", result={**replayed, "cached": True, "timings": {"total": 0.0}})
             return
         grounding = gr.ground(question, subject)
         yield _ev("grounding", data=grounding.to_dict())
@@ -161,23 +212,13 @@ class TutorPipeline:
         t = time.time()
         prefix = f"pr_{uuid.uuid4().hex[:8]}"
         try:
-            items = self.practice.run(question, grounding, label, count=count, id_prefix=prefix)
-            practice_checks = self.reviewer.verify_practice(grounding, items)
-            if not self.fast and len(items) < MIN_PRACTICE and revisions < self.max_revisions + 1:
-                yield _ev("revision", agent="practice", issues=[f"Only {len(items)} usable practice problems; asking for more."])
-                more = self.practice.run(
-                    question, grounding, label, count=count,
-                    avoid=[i.prompt for i in items], id_prefix=f"{prefix}b",
-                )
-                self.reviewer.verify_practice(grounding, more)
-                items.extend(more)
-                items = items[:count]
-                practice_checks = [self._practice_summary(items)]
+            items = self._round_items(question, grounding, label, count, prefix)
+            practice_checks = [self._practice_summary(items)]
         except ModelUnavailable as exc:
             practice_checks = [Check("practice_items_verified", "warn", f"Practice agent failed: {exc}")]
         timings["practice"] = round(time.time() - t, 2)
         practice_set = self._practice_set(grounding, label, items)
-        practice_store.put_many({q["id"]: q for q in practice_set["questions"]})
+        self._open_round(practice_set, prefix, question, subject, label, round_no=1, level="start", history=[])
         yield _ev("agent_result", agent="practice", data=practice_set)
 
         # ---- Agent 4: review --------------------------------------------------------
@@ -224,6 +265,66 @@ class TutorPipeline:
         if not items:
             return Check("practice_items_verified", "warn", "No usable practice problems were produced.")
         return Check("practice_items_verified", "pass" if verified else "warn", f"{verified}/{len(items)} practice problems machine-verified.")
+
+    @staticmethod
+    def _open_round(practice_set: Dict[str, Any], set_id: str, question: str, subject: str, label: str,
+                    round_no: int, level: str, history: List[str]) -> None:
+        ids = [q["id"] for q in practice_set["questions"]]
+        for q in practice_set["questions"]:
+            q["set_id"] = set_id
+        practice_set.update(set_id=set_id, round=round_no, level=level, mastery_threshold=MASTERY_THRESHOLD)
+        practice_store.put_many({q["id"]: q for q in practice_set["questions"]})
+        practice_sessions.put_many({set_id: {
+            "set_id": set_id, "question": question, "subject": subject, "misconception": label,
+            "round": round_no, "level": level, "ids": ids, "results": {}, "answers": {},
+            "history": history + [q["prompt"] for q in practice_set["questions"]],
+        }})
+
+    def _round_items(self, question: str, grounding: gr.Grounding, label: str, count: int, prefix: str,
+                     level: str = "start", mistakes: Optional[List[str]] = None,
+                     avoid: Optional[List[str]] = None) -> List[PracticeItem]:
+        """Generate, verify (drops wrong ones) and top up once, so a round has enough problems to judge 80%."""
+        avoid = list(avoid or [])
+        items = self.practice.run(question, grounding, label, count=count, avoid=avoid, id_prefix=prefix,
+                                  level=level, mistakes=mistakes)
+        self.reviewer.verify_practice(grounding, items)
+        if len(items) < count:
+            more = self.practice.run(question, grounding, label, count=count - len(items),
+                                     avoid=avoid + [i.prompt for i in items], id_prefix=f"{prefix}b",
+                                     level=level, mistakes=mistakes)
+            self.reviewer.verify_practice(grounding, more)
+            items.extend(more)
+        items = items[:count]
+        for i, item in enumerate(items, start=1):
+            item.id = f"{prefix}_{i}"
+        return items
+
+    def next_practice(self, set_id: str) -> Dict[str, Any]:
+        """New round of different problems after a round scored below the mastery threshold."""
+        session = practice_sessions.get(set_id)
+        if not session:
+            raise KeyError("Unknown practice round.")
+        status = round_status(session)
+        if not status["complete"]:
+            raise ValueError("Answer every problem in this round first.")
+        if status["mastered"]:
+            raise ValueError("This round is already mastered; no more practice is needed.")
+        level = status["next_level"]
+        grounding = gr.ground(session["question"], session["subject"])
+        mistakes = []
+        for pid in session["ids"]:
+            if not session["results"].get(pid):
+                item = practice_store.get(pid) or {}
+                mistakes.append(f"{item.get('prompt', '')} -> learner answered: {session['answers'].get(pid, '')[:120]}")
+        count = len(session["ids"]) or self.practice_count
+        new_id = f"pr_{uuid.uuid4().hex[:8]}"
+        items = self._round_items(session["question"], grounding, session["misconception"], count, new_id,
+                                  level=level, mistakes=mistakes, avoid=session["history"])
+        practice_set = self._practice_set(grounding, session["misconception"], items)
+        self._open_round(practice_set, new_id, session["question"], session["subject"], session["misconception"],
+                         round_no=session["round"] + 1, level=level, history=session["history"])
+        practice_set["previous"] = status
+        return practice_set
 
     @staticmethod
     def _practice_set(grounding: gr.Grounding, label: str, items: List[PracticeItem]) -> Dict[str, Any]:

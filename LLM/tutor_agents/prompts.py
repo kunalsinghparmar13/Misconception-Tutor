@@ -55,9 +55,14 @@ The code must run with the standard library only, with no input() calls and no f
 
 PRACTICE_MATH = COMMON + """
 
-YOUR JOB: write {count} NEW practice problems that target this misconception: {misconception}.
-Problems must be different from the learner's own problem, short, and answerable with a single number or fraction.
-Vary the numbers; make later problems slightly harder. Use exactly this format for each problem:
+YOUR JOB: write {count} NEW practice problems built from the learner's own problem and their mistake: {misconception}.
+Each problem must be the same kind of problem as the learner's (same topic and operation) so that the same wrong idea
+would give a wrong answer on it, but it must NOT be a copy: change the numbers every time.
+Every problem must be clearly different from the others: different numbers, and vary the form (for example a
+different pair of denominators, a missing-number version, or a one-sentence word problem). Never repeat one template.
+Each answer must be a single number or fraction.
+DIFFICULTY: {level_rule}
+Use exactly this format for each problem:
 
 Problem 1
 Question: <the problem, with numbers only so the answer is a single value>
@@ -69,7 +74,10 @@ Problem 2
 
 PRACTICE_CODE = COMMON + """
 
-YOUR JOB: write {count} NEW short Python debugging exercises that target this misconception: {misconception}.
+YOUR JOB: write {count} NEW short Python debugging exercises built from the learner's own code and their mistake: {misconception}.
+Each exercise must contain the same kind of bug the learner made, but in a clearly different task: different data,
+different variable and function names, a different goal. Never repeat the learner's code or another exercise.
+DIFFICULTY: {level_rule}
 Each exercise gives BUGGY code (3-8 lines) that the learner must fix, plus the corrected code.
 Both snippets must end by printing a result, use only the standard library and no input().
 Use exactly this format for each exercise:
@@ -98,3 +106,14 @@ statements that are false, and anything confusing for a student. Reply in exactl
 Verdict: PASS or FAIL
 Issues: <'none', or a short list separated by semicolons>
 Suggestion: <one sentence, or 'none'>"""
+
+
+# Difficulty for a practice round. "start" is the first round after an answer; later rounds follow the learner's score.
+LEVEL_RULES = {
+    "start": "start at about the same difficulty as the learner's problem and make each next problem a little harder.",
+    "easier": "the learner is still struggling, so make every problem EASIER than the learner's problem: smaller, friendlier "
+              "numbers (or shorter code) and a single step, so the right idea is easy to see.",
+    "same": "keep about the same difficulty as the learner's problem, but use new numbers and new forms.",
+    "harder": "make every problem a little HARDER than the learner's problem: larger numbers, one extra step, or a less "
+              "familiar form (for code: one more line or a slightly bigger input), still with the same kind of mistake.",
+}

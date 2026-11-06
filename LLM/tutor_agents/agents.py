@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import difflib
+import re
+
 import os
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional
@@ -161,6 +164,33 @@ class SolverAgent(Agent):
 
 
 # ------------------------------------------------------------------------------ agent 3
+def _text_key(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "").lower()).strip()
+
+
+def practice_key(item: "PracticeItem") -> str:
+    """What makes two practice items 'the same exercise' (maths: the numbers and operators; code: the code)."""
+    if item.type == "math":
+        nums = sorted(re.findall(r"\d+(?:\.\d+)?", item.prompt))
+        ops = "".join(sorted(re.findall(r"[+\-*/\u00f7\u00d7^]", item.prompt)))
+        return "math:" + ",".join(nums) + "|" + ops
+    # code: compare the code itself (comments and spacing ignored), not the instruction sentence
+    source = item.code or item.prompt or ""
+    source = re.sub(r"#[^\n]*", "", source)
+    return re.sub(r"\s+", "", source.lower())
+
+
+def _similar(a: str, b: str) -> bool:
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    if a.startswith("math:") or b.startswith("math:"):
+        return False  # maths keys are exact: different numbers means a different problem
+    return difflib.SequenceMatcher(None, a, b).ratio() >= 0.85
+
+
+
 class PracticeAgent(Agent):
     """Fresh practice problems for the same misconception."""
 
@@ -176,22 +206,36 @@ class PracticeAgent(Agent):
         count: int = 6,
         avoid: Optional[List[str]] = None,
         id_prefix: str = "pr",
+        level: str = "start",
+        mistakes: Optional[List[str]] = None,
     ) -> List[PracticeItem]:
+        """``level``: start | easier | same | harder. ``mistakes``: the learner's wrong answers so far."""
         # Ask in small batches: one long generation can exceed the ~100 s per-request limit of free
         # tunnels (Cloudflare 524) on a T4, and short batches also parse more reliably.
         items: List[PracticeItem] = []
         seen = list(avoid or [])
+        seen_keys = [practice_key(PracticeItem(id="", type="code" if grounding.is_code else "math", prompt=a)) for a in seen]
+        own_key = practice_key(PracticeItem(id="", type="code" if grounding.is_code else "math",
+                                            prompt=(grounding.expression if not grounding.is_code else None) or question))
         attempts = 0
-        while len(items) < count and attempts < count + 1:
+        rejected = 0
+        while len(items) < count and attempts < 2 * count + 1:
             attempts += 1
             # code exercises are ~4x longer than maths ones, so ask for one at a time
             size = 1 if grounding.is_code else self.batch_size
             want = min(size, count - len(items))
-            batch = self._run_batch(question, grounding, misconception, want, seen, f"{id_prefix}{attempts}")
+            # each time the model repeats itself, sample a little more freely
+            temperature = min(1.0, self.temperature + 0.15 * rejected)
+            batch = self._run_batch(question, grounding, misconception, want, seen, f"{id_prefix}{attempts}",
+                                    level=level, mistakes=mistakes, temperature=temperature)
             for item in batch:
-                if item.prompt not in seen:
-                    seen.append(item.prompt)
-                    items.append(item)
+                key = practice_key(item)
+                if any(_similar(key, k) for k in seen_keys) or _similar(key, own_key):
+                    rejected += 1
+                    continue  # same numbers / same code as an earlier problem: not a new exercise
+                seen_keys.append(key)
+                seen.append(item.prompt)
+                items.append(item)
         for i, item in enumerate(items, start=1):
             item.id = f"{id_prefix}_{i}"
         return items[:count]
@@ -206,18 +250,35 @@ class PracticeAgent(Agent):
         count: int,
         avoid: List[str],
         id_prefix: str,
+        level: str = "start",
+        mistakes: Optional[List[str]] = None,
+        temperature: Optional[float] = None,
     ) -> List[PracticeItem]:
         label = misconception or grounding.misconception_id or "the mistake in the learner's work"
-        system = (prompts.PRACTICE_CODE if grounding.is_code else prompts.PRACTICE_MATH).format(count=count, misconception=label)
+        level_rule = prompts.LEVEL_RULES.get(level, prompts.LEVEL_RULES["start"])
+        system = (prompts.PRACTICE_CODE if grounding.is_code else prompts.PRACTICE_MATH).format(
+            count=count, misconception=label, level_rule=level_rule)
         user = f"The learner's original problem:\n{_clip(question, 1200)}\n"
+        if grounding.is_code:
+            user += ("\nDo NOT copy this code. Each exercise needs its own task, its own data and its own variable names "
+                     "(for example scores, temperatures, words, ages), but the same kind of bug.\n")
+        else:
+            user += "\nDo NOT reuse the learner's numbers. Every problem needs new numbers.\n"
+        if grounding.student_answer and not grounding.student_correct:
+            user += f"\nThe learner's wrong answer: {grounding.student_answer}\n"
+        if grounding.replay:
+            user += f"How that mistake happened: {_clip(grounding.replay, 300)}\n"
         if grounding.facts_block():
             user += f"\n{grounding.facts_block()}\n"
+        if mistakes:
+            user += "\nIn the last practice round the learner still got these wrong (target this same mistake):\n" + \
+                "\n".join(f"- {_clip(m, 200)}" for m in mistakes[:6]) + "\n"
         if avoid:
             user += "\nDo not repeat these problems:\n" + "\n".join(f"- {_clip(a, 120)}" for a in avoid) + "\n"
         res = self.client.chat(
             [{"role": "system", "content": system}, {"role": "user", "content": user}],
             max_tokens=min(self.max_tokens, 200 * count + 120),
-            temperature=self.temperature,
+            temperature=self.temperature if temperature is None else temperature,
         )
         items: List[PracticeItem] = []
         for i, raw in enumerate(parsing.parse_practice(res.text), start=1):

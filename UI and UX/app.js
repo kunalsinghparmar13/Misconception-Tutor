@@ -255,14 +255,75 @@
       return;
     }
     body.appendChild(el('p', 'font-body-sm text-body-sm text-on-surface-variant mb-3',
-      `${questions.length} problems that target: ${set.misconception}. Submit each answer to see how you are improving.`));
-    const list = el('div', 'space-y-3');
-    questions.forEach((q, index) => list.appendChild(practiceCard(q, index)));
-    body.appendChild(list);
+      `Problems built from your question and your mistake (${set.misconception}). Get ${Math.round((set.mastery_threshold || 0.8) * 100)}% of a round right to finish; otherwise you get a new round of different problems.`));
+    const rounds = el('div', 'space-y-6');
+    body.appendChild(rounds);
+    renderRound(set, rounds);
     setChip('practice', 'Done', 'done');
   }
 
-  function practiceCard(q, index) {
+  const LEVEL_LABEL = { start: 'Starting level', easier: 'Easier', same: 'Same level, new problems', harder: 'Harder' };
+
+  function renderRound(set, rounds) {
+    const section = el('div', 'space-y-3');
+    const head = el('div', 'flex items-center justify-between');
+    head.appendChild(el('span', 'font-label-md text-label-md text-on-surface', `Round ${set.round || 1} - ${LEVEL_LABEL[set.level] || 'Practice'}`));
+    const score = el('span', 'font-label-sm text-label-sm text-outline', `0 / ${set.questions.length} answered`);
+    head.appendChild(score);
+    section.appendChild(head);
+    if (set.previous) {
+      section.appendChild(el('p', 'font-body-sm text-body-sm text-on-surface-variant',
+        `Last round: ${set.previous.correct}/${set.previous.total} correct (${Math.round(set.previous.accuracy * 100)}%). These are new problems for the same mistake.`));
+    }
+    const list = el('div', 'space-y-3');
+    set.questions.forEach((q, index) => list.appendChild(practiceCard(q, index, (info) => onGraded(info, set, section, score, rounds))));
+    section.appendChild(list);
+    rounds.appendChild(section);
+  }
+
+  function onGraded(info, set, section, score, rounds) {
+    if (!info) return;
+    score.textContent = `${info.correct} correct, ${info.answered} / ${info.total} answered`;
+    if (!info.complete || section.dataset.done) return;
+    section.dataset.done = '1';
+    const pct = Math.round(info.accuracy * 100);
+    if (info.mastered) {
+      section.appendChild(el('div', 'rounded-xl bg-tertiary-container p-4 font-body-md text-body-md text-on-tertiary-container',
+        `Mastered: ${info.correct}/${info.total} correct (${pct}%). You have fixed this misconception - no more practice needed.`));
+      setChip('practice', 'Mastered', 'done');
+      return;
+    }
+    const note = el('div', 'rounded-xl bg-surface-container p-4 font-body-md text-body-md text-on-surface',
+      `${info.correct}/${info.total} correct (${pct}%), below ${Math.round(info.threshold * 100)}%. Making new problems (${(LEVEL_LABEL[info.next_level] || info.next_level).toLowerCase()})...`);
+    section.appendChild(note);
+    setChip('practice', 'New round...', 'work');
+    nextRound(info.set_id, note, rounds);
+  }
+
+  async function nextRound(setId, note, rounds) {
+    try {
+      const res = await fetch('/api/practice/next', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ set_id: setId }),
+      });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload.error || 'Could not create new problems');
+      if (!payload.questions || !payload.questions.length) throw new Error('The model did not produce usable problems');
+      note.textContent += ' ready below.';
+      renderRound(payload, rounds);
+      setChip('practice', `Round ${payload.round}`, 'done');
+    } catch (error) {
+      note.textContent = `Could not make a new round: ${error.message}. `;
+      const retry = el('button', 'ml-2 rounded-full bg-primary px-3 py-1 font-label-md text-label-md text-on-primary', 'Try again');
+      retry.type = 'button';
+      retry.addEventListener('click', () => { retry.remove(); note.textContent = 'Making new problems...'; nextRound(setId, note, rounds); });
+      note.appendChild(retry);
+      setChip('practice', 'Retry', 'warn');
+    }
+  }
+
+  function practiceCard(q, index, onRound) {
     const isCode = q.type === 'code';
     const card = el('div', 'rounded-xl bg-surface-container-low p-4');
     const top = el('div', 'flex items-center justify-between mb-2');
@@ -325,6 +386,7 @@
         }
         if (payload.explanation) box.appendChild(el('p', 'font-body-sm text-body-sm text-on-surface-variant', payload.explanation));
         card.appendChild(box);
+        if (onRound && payload.round) onRound(payload.round);
       } catch (error) {
         verdict.textContent = `Could not grade: ${error.message}`;
         verdict.className = 'font-body-sm text-body-sm text-error';

@@ -535,13 +535,46 @@ def submit_practice_attempt():
         misconception=misconception,
         correct=correct,
     )
+    round_info = None
+    if stored and stored.get("set_id"):
+        from tutor_agents.pipeline import record_practice_result
+
+        round_info = record_practice_result(stored["set_id"], practice_id, correct, answer)
     return jsonify({
         "correct": correct,
         "practice_id": practice_id,
         "misconception": misconception,
         "progress": backend_code.get_practice_progress(learner_id),
+        "round": round_info,
         **details,
     })
+
+
+@app.post("/api/practice/next")
+def next_practice_round():
+    """After a round scored below 80%: a new round of different problems at an adjusted difficulty."""
+    from tutor_agents.model_client import ModelUnavailable
+    from tutor_agents.pipeline import get_pipeline
+
+    body = request.get_json(silent=True) or {}
+    set_id = sanitize_input_text(str(body.get("set_id", "")), max_length=64)
+    if not set_id:
+        return jsonify({"error": "set_id is required."}), 400
+    if not _tutor_slots.acquire(blocking=False):
+        return jsonify({"error": "The tutor is busy with other learners. Please retry in a few seconds."}), 429
+    try:
+        return jsonify(get_pipeline().next_practice(set_id))
+    except KeyError:
+        return jsonify({"error": "This practice round has expired. Ask your question again."}), 404
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 409
+    except ModelUnavailable as exc:
+        return jsonify({"error": exc.public_message, "status": "model_unavailable"}), 503
+    except Exception:
+        app.logger.exception("next practice round failed")
+        return jsonify({"error": "Could not create new practice problems."}), 500
+    finally:
+        _tutor_slots.release()
 
 
 @app.post("/api/llm/feedback")
