@@ -4,8 +4,15 @@
 #   export LLM_BACKEND_URL=https://xxxx.trycloudflare.com   # your model server (Kaggle notebook / Modal / your GPU PC)
 #   export LLM_BACKEND_TOKEN=...                             # the token it printed
 #   ./scripts/run_local.sh
+#
+# Or save those two lines (LLM_BACKEND_URL=... and LLM_BACKEND_TOKEN=...) in .env.kaggle and just run the script.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
+# Optional: put LLM_BACKEND_URL / LLM_BACKEND_TOKEN in .env.kaggle (git-ignored) instead of exporting them.
+if [ -z "${LLM_BACKEND_URL:-}" ] && [ -f .env.kaggle ]; then
+  set -a; . ./.env.kaggle; set +a
+fi
 
 if [ -z "${LLM_BACKEND_URL:-}" ]; then
   echo "Set LLM_BACKEND_URL (and LLM_BACKEND_TOKEN) to your model server first. See docs/DEPLOY_FREE.md." >&2
