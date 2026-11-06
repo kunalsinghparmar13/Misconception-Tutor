@@ -40,6 +40,28 @@ def sh(cmd: list[str], **kw) -> None:
     subprocess.run(cmd, check=True, **kw)
 
 
+def find_libcuda() -> str | None:
+    import glob
+
+    patterns = [
+        "/usr/local/cuda*/lib64/stubs/libcuda.so",
+        "/usr/local/cuda*/targets/*/lib/stubs/libcuda.so",
+        "/usr/lib/x86_64-linux-gnu/libcuda.so",
+        "/usr/lib/x86_64-linux-gnu/libcuda.so.1",
+        "/usr/local/nvidia/lib64/libcuda.so*",
+        "/usr/lib64/libcuda.so*",
+    ]
+    for pattern in patterns:
+        hits = sorted(glob.glob(pattern))
+        if hits:
+            print("libcuda:", hits[0], flush=True)
+            return hits[0]
+    found = subprocess.run(["bash", "-lc", "ldconfig -p | grep -o '/.*libcuda.so[.0-9]*' | head -1"],
+                           capture_output=True, text=True).stdout.strip()
+    print("libcuda:", found or "not found", flush=True)
+    return found or None
+
+
 def build_llama_server() -> Path:
     binary = LLAMA_DIR / "build" / "bin" / "llama-server"
     if binary.exists():
@@ -47,10 +69,19 @@ def build_llama_server() -> Path:
     WORK.mkdir(parents=True, exist_ok=True)
     if not LLAMA_DIR.exists():
         sh(["git", "clone", "--depth", "1", "https://github.com/ggml-org/llama.cpp", str(LLAMA_DIR)])
+    build = LLAMA_DIR / "build"
+    if build.exists():  # a previous failed configure leaves a cache that would repeat the error
+        import shutil
+
+        shutil.rmtree(build)
     # sm_75 = T4. (CUDA 13 dropped sm_60, so P100 is not supported here.) One arch + one target ≈ 10 minutes.
     arch = os.getenv("CUDA_ARCH", "75")
-    sh(["cmake", "-S", str(LLAMA_DIR), "-B", str(LLAMA_DIR / "build"), "-DGGML_CUDA=ON",
-        f"-DCMAKE_CUDA_ARCHITECTURES={arch}", "-DLLAMA_CURL=OFF", "-DCMAKE_BUILD_TYPE=Release"])
+    args = ["cmake", "-S", str(LLAMA_DIR), "-B", str(build), "-DGGML_CUDA=ON",
+            f"-DCMAKE_CUDA_ARCHITECTURES={arch}", "-DLLAMA_CURL=OFF", "-DCMAKE_BUILD_TYPE=Release"]
+    driver = find_libcuda()
+    if driver:  # Kaggle's image ships libcuda.so.1 without the unversioned name CMake looks for
+        args.append(f"-DCUDA_cuda_driver_LIBRARY={driver}")
+    sh(args)
     sh(["cmake", "--build", str(LLAMA_DIR / "build"), "--config", "Release", "-j", str(os.cpu_count() or 4),
         "--target", "llama-server"])
     return binary
