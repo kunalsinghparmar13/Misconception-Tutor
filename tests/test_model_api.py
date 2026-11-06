@@ -119,6 +119,23 @@ def test_generative_cognitive_socratic_for_python():
     assert len(data["practice_set"]["questions"]) == 6
 
 
+def test_generative_cognitive_socratic_for_custom_python_index_error():
+    client = app.test_client()
+    response = client.post(
+        "/api/llm/answer",
+        json={
+            "question": "items = [10, 20]\nprint(items[5])",
+            "subject": "Python",
+            "learner_id": "custom_py_student",
+        },
+    )
+    assert response.status_code == 200
+    data = response.get_json()
+    # Verifies it parsed the student's exact code rather than the canned 2D grid matrix
+    assert "items[5]" in data["answer"] or "IndexError" in data["answer"]
+    assert "Off-by-One Horizon" not in data["answer"]
+
+
 def test_practice_submission_flow():
     client = app.test_client()
     response = client.post(

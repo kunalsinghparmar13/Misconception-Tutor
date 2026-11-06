@@ -574,8 +574,28 @@ class LLMEngine:
             )
             return response, metadata
 
-        # Case 3: Recursive Fibonacci / Stack Overflow
-        if any(k in q_lower for k in ["fib", "recursion", "memoization", "recursionerror", "stack overflow"]):
+        # Case 3: Python Code Compilation & AST Debugging Check (Dynamic Code First)
+        has_code_syntax = (
+            "```" in question
+            or "def " in question
+            or "import " in question
+            or ("for " in question and ":" in question)
+            or ("while " in question and ":" in question)
+            or "print(" in question
+            or "SyntaxError" in question
+            or "IndentationError" in question
+            or "TypeError" in question
+            or "ZeroDivisionError" in question
+            or "IndexError" in question
+        )
+        is_python_subject = subject.lower() in ["python", "coding", "programming", "computer science", "cs"]
+        # If actual code syntax is provided, always debug the user's specific code dynamically
+        if has_code_syntax or (is_python_subject and any(c in question for c in ["=", "(", ")", ":", "[", "]"])):
+            from backend.python_debugger import python_debugger
+            return python_debugger.analyze_and_explain(question)
+
+        # Case 4: Recursive Fibonacci / Stack Overflow Conceptual Problem
+        if any(k in q_lower for k in ["fib", "fibonacci", "memoization", "recursionerror"]):
             metadata["topic"] = "recursion_optimization"
             response = (
                 "### 🔍 First Divergence: Exponential Call Tree Overlap\n\n"
@@ -599,7 +619,7 @@ class LLMEngine:
             )
             return response, metadata
 
-        # Case 4: Integration by Parts Sign Flip
+        # Case 5: Integration by Parts Sign Flip
         if any(k in q_lower for k in ["integration by parts", "integral", "∫", "dx", "e^(-2x)"]):
             metadata["topic"] = "calculus_integration_by_parts"
             response = (
@@ -622,8 +642,8 @@ class LLMEngine:
             )
             return response, metadata
 
-        # Case 5: Nested Loop IndexError / Boundary Check
-        if any(k in q_lower for k in ["indexerror", "grid", "out of range", "boundary", "col+1"]):
+        # Case 6: Nested 2D Grid / Matrix Loop Boundary Check (Canonical Problem)
+        if ("grid" in q_lower and ("col" in q_lower or "boundary" in q_lower or "horizon" in q_lower)) or "grid[row][col+1]" in question.replace(" ", ""):
             metadata["topic"] = "matrix_boundary_guard"
             response = (
                 "### 🔍 First Divergence: Off-by-One Horizon\n\n"
@@ -651,24 +671,6 @@ class LLMEngine:
                 "Whenever accessing `index + k`, either restrict `range(..., len - k)` or use Python short-circuit evaluation (`index + k < len and ...`) to prevent `IndexError`."
             )
             return response, metadata
-
-        # Case 6: Python Code Compilation & AST Debugging Check
-        has_code_syntax = (
-            "```" in question
-            or "def " in question
-            or "import " in question
-            or ("for " in question and ":" in question)
-            or ("while " in question and ":" in question)
-            or "print(" in question
-            or "SyntaxError" in question
-            or "IndentationError" in question
-            or "TypeError" in question
-            or "ZeroDivisionError" in question
-        )
-        is_python_subject = subject.lower() in ["python", "coding", "programming", "computer science", "cs"]
-        if has_code_syntax or is_python_subject:
-            from backend.python_debugger import python_debugger
-            return python_debugger.analyze_and_explain(question)
 
         # Case 7: General Mathematical Equations, Arithmetic & Percentage Problem Solving
         from backend.general_solver import general_solver
