@@ -2,7 +2,6 @@
 
 from backend.api import app
 from tutor_agents import ModelClient, TutorPipeline, set_pipeline
-from tutor_agents import grounding as gr
 from tutor_agents.agents import PracticeItem, _similar, practice_key
 from tutor_agents.pipeline import _next_level, round_status
 
