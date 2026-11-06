@@ -11,6 +11,8 @@ for p in (ROOT, ROOT / "src", ROOT / "LLM"):
 
 # Legacy tests exercise the deterministic engine; model-only behaviour has its own tests.
 os.environ.setdefault("LLM_ONLY_MODEL", "0")
+os.environ.setdefault("TUTOR_FAST", "0")  # fast mode has its own tests
+os.environ.setdefault("TUTOR_CACHE", "0")
 os.environ.pop("LLM_BACKEND_URL", None)
 os.environ.pop("LLM_LOCAL_MODEL", None)
 

@@ -76,7 +76,9 @@ Render's free tier sleeps after idle (about 30-60 s wake-up). Any Docker host wo
 | `LLM_ONLY_MODEL` | app | Default on: 503 instead of canned text |
 | `LLM_PIPELINE` | app | `0` turns the 4-agent pipeline off |
 | `TUTOR_MAX_CONCURRENT` | app | Simultaneous tutor requests (default 2) |
-| `PRACTICE_COUNT` | app | Practice problems per answer (default 6) |
+| `TUTOR_FAST` | app | Default `1`: short outputs, 3 practice problems, no retry or model self-review (about 3 model calls). `0` = full depth, much slower on a free T4 |
+| `TUTOR_CACHE` | app | Default `1`: identical questions are replayed instantly. `0` turns it off |
+| `PRACTICE_COUNT` | app | Practice problems per answer (default 3 in fast mode, else 6) |
 | `LLM_BACKEND_TIMEOUT` | app | Seconds to wait for the model (default 180) |
 | `LLM_LOCAL_MODEL` | app | `1` loads the model inside the app (GPU host only) |
 | `ADMIN_TOKEN`, `APP_ENV` | app | Protect admin routes; `production` hardens defaults |
@@ -85,3 +87,17 @@ Render's free tier sleeps after idle (about 30-60 s wake-up). Any Docker host wo
 - Banner says "model offline": the notebook stopped or the tunnel URL changed. Rerun it and update `LLM_BACKEND_URL`.
 - 401 from the model: `LLM_BACKEND_TOKEN` differs from `MODEL_SERVER_TOKEN`.
 - Slow first answer: the four agents make several model calls; a T4 takes tens of seconds per full answer.
+
+## 5. Deploy the web app on any free Docker host
+
+The image reads `PORT` from the host, so the same `Dockerfile` works unchanged on Render, Koyeb, Fly.io, Google Cloud Run
+and Railway (free tiers and limits change - check each). On every host you only set the variables in `.env.example`:
+`LLM_BACKEND_URL`, `LLM_BACKEND_TOKEN` and `ADMIN_TOKEN` (plus `APP_ENV=production`, `LLM_ONLY_MODEL=1`).
+
+- **Render:** New -> Blueprint -> pick this repo (uses `render.yaml`), then paste the two model values when asked.
+- **Anywhere else:** create a web service from the GitHub repo using the `Dockerfile`, set the health check path to `/api/health`,
+  add the variables above.
+- **Your own computer:** `cp .env.example .env`, fill it in, then `docker compose up --build`.
+
+Because the Kaggle tunnel address changes every restart, update `LLM_BACKEND_URL` / `LLM_BACKEND_TOKEN` on your host each time
+(Modal's address is permanent, so it avoids this).

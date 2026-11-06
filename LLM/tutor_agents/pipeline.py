@@ -11,6 +11,7 @@ from typing import Any, Dict, Iterator, List, Optional
 
 from . import grounding as gr
 from .agents import (
+    fast_mode,
     Check,
     ExplainerAgent,
     PracticeAgent,
@@ -58,11 +59,15 @@ class TutorPipeline:
         self,
         client: Optional[ModelClient] = None,
         practice_count: Optional[int] = None,
-        max_revisions: int = 1,
+        max_revisions: Optional[int] = None,
     ) -> None:
         self.client = client or ModelClient()
-        self.practice_count = practice_count or int(os.getenv("PRACTICE_COUNT", "6"))
-        self.max_revisions = max_revisions
+        self.fast = fast_mode()
+        self.practice_count = practice_count or int(os.getenv("PRACTICE_COUNT", "3" if self.fast else "6"))
+        # Each retry is another full model call; fast mode skips them and relies on the checks to flag problems.
+        self.max_revisions = max_revisions if max_revisions is not None else (0 if self.fast else 1)
+        self._cache_on = os.getenv("TUTOR_CACHE", "1").strip().lower() not in {"0", "false", "no", "off"}
+        self._cache: OrderedDict = OrderedDict()
         self.explainer = ExplainerAgent(self.client)
         self.solver = SolverAgent(self.client)
         self.practice = PracticeAgent(self.client)
@@ -97,14 +102,25 @@ class TutorPipeline:
         question: str,
         subject: str = "Mathematics",
         practice_count: Optional[int] = None,
-        review_with_model: bool = True,
+        review_with_model: Optional[bool] = None,
     ) -> Iterator[Dict[str, Any]]:
         started = time.time()
+        if review_with_model is None:
+            review_with_model = not self.fast  # the model critique is advisory; the exact checks always run
         count = max(3, min(8, int(practice_count or self.practice_count)))
         timings: Dict[str, float] = {}
         revisions = 0
 
         yield _ev("start", agents=AGENT_ORDER)
+        cache_key = (question.strip().lower(), subject.strip().lower(), count, bool(review_with_model))
+        cached = self._cache.get(cache_key) if self._cache_on else None
+        if cached is not None:  # identical question answered recently: replay instantly, no model calls
+            yield _ev("grounding", data=cached["grounding"])
+            for agent, key in (("explainer", "explanation"), ("solver", "solution"), ("practice", "practice_set"), ("reviewer", "review")):
+                yield _ev("agent_start", agent=agent)
+                yield _ev("agent_result", agent=agent, data=cached[key])
+            yield _ev("complete", result={**cached, "cached": True, "timings": {"total": 0.0}})
+            return
         grounding = gr.ground(question, subject)
         yield _ev("grounding", data=grounding.to_dict())
 
@@ -147,7 +163,7 @@ class TutorPipeline:
         try:
             items = self.practice.run(question, grounding, label, count=count, id_prefix=prefix)
             practice_checks = self.reviewer.verify_practice(grounding, items)
-            if len(items) < MIN_PRACTICE and revisions < self.max_revisions + 1:
+            if not self.fast and len(items) < MIN_PRACTICE and revisions < self.max_revisions + 1:
                 yield _ev("revision", agent="practice", issues=[f"Only {len(items)} usable practice problems; asking for more."])
                 more = self.practice.run(
                     question, grounding, label, count=count,
@@ -196,6 +212,10 @@ class TutorPipeline:
             "timings": {**timings, "total": round(time.time() - started, 2)},
         }
         result["answer"] = compose_markdown(result)
+        if self._cache_on and review.approved:
+            self._cache[cache_key] = result
+            while len(self._cache) > 200:
+                self._cache.popitem(last=False)
         yield _ev("complete", result=result)
 
     # ------------------------------------------------------------------ helpers

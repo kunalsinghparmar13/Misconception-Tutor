@@ -158,3 +158,33 @@ def test_parsers_are_tolerant():
     assert [i["answer"] for i in items] == ["5/6", "1"]
     assert parsing.find_field("**Final answer:** 5/12", ["final answer"]) == "5/12"
     assert parsing.first_python_block("x\n```python\nprint(1)\n```") == "print(1)"
+
+
+def test_fast_mode_makes_three_model_calls_and_caps_tokens(monkeypatch):
+    monkeypatch.setenv("TUTOR_FAST", "1")
+    monkeypatch.setenv("TUTOR_CACHE", "0")
+    calls, budgets = [], []
+    client = scripted([SOLVE_OK, SOLVE_OK], calls)
+    inner = client._transport
+
+    def spy(messages, max_tokens, temperature):
+        budgets.append(max_tokens)
+        return inner(messages, max_tokens, temperature)
+
+    client._transport = spy
+    result = TutorPipeline(client).run("Why is 1/4 + 1/6 = 1/5 wrong?", "Mathematics")
+    assert len(calls) == 3  # explainer, solver, practice - no model critique, no top-up
+    assert max(budgets) <= 420
+    assert result["review"]["approved"] is True
+
+
+def test_repeat_question_is_served_from_cache_without_model_calls(monkeypatch):
+    monkeypatch.setenv("TUTOR_FAST", "1")
+    monkeypatch.setenv("TUTOR_CACHE", "1")
+    calls = []
+    pipe = TutorPipeline(scripted([SOLVE_OK, SOLVE_OK], calls))
+    first = pipe.run("Why is 1/4 + 1/6 = 1/5 wrong?", "Mathematics")
+    n = len(calls)
+    second = pipe.run("why is 1/4 + 1/6 = 1/5 wrong? ", "Mathematics")
+    assert len(calls) == n and second.get("cached") is True
+    assert second["solution"]["final_answer"] == first["solution"]["final_answer"]
