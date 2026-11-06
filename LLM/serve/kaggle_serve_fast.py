@@ -77,7 +77,9 @@ def build_llama_server() -> Path:
     # sm_75 = T4. (CUDA 13 dropped sm_60, so P100 is not supported here.) One arch + one target ≈ 10 minutes.
     arch = os.getenv("CUDA_ARCH", "75")
     args = ["cmake", "-S", str(LLAMA_DIR), "-B", str(build), "-DGGML_CUDA=ON",
-            f"-DCMAKE_CUDA_ARCHITECTURES={arch}", "-DLLAMA_CURL=OFF", "-DCMAKE_BUILD_TYPE=Release"]
+            f"-DCMAKE_CUDA_ARCHITECTURES={arch}", "-DLLAMA_CURL=OFF", "-DCMAKE_BUILD_TYPE=Release",
+            # flash-attention kernels are most of the compile time and give little on a T4
+            f"-DGGML_CUDA_FA={os.getenv('LLAMA_CUDA_FA', 'OFF')}"]
     driver = find_libcuda()
     if driver:  # Kaggle's image ships libcuda.so.1 without the unversioned name CMake looks for
         args.append(f"-DCUDA_cuda_driver_LIBRARY={driver}")
