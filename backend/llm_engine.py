@@ -70,6 +70,55 @@ class LLMEngine:
             "kunalsinghparmar/misconception-tutor-gemma4-e4b",
         )
 
+    @property
+    def remote_backend_url(self) -> Optional[str]:
+        """Returns the base URL of a separate remote LLM service (Modal, HF Space, or GPU host)."""
+        url = (
+            os.getenv("LLM_BACKEND_URL")
+            or os.getenv("REMOTE_LLM_URL")
+            or os.getenv("LLM_API_URL")
+            or os.getenv("MODAL_APP_URL")
+            or os.getenv("HF_SPACE_URL")
+        )
+        if url:
+            return url.strip().rstrip("/")
+        return None
+
+    def _check_remote_backend_status(self) -> Dict[str, Any]:
+        """Probes the configured remote LLM backend for readiness and model information."""
+        url = self.remote_backend_url
+        if not url:
+            return {"configured": False, "reachable": False}
+        import requests
+
+        headers = {}
+        token = (
+            os.getenv("LLM_BACKEND_TOKEN")
+            or os.getenv("HF_TOKEN")
+            or os.getenv("ADMIN_TOKEN")
+        )
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+            headers["X-Admin-Token"] = token
+
+        for ep in ("/api/ready", "/api/health", "/api/backend-status"):
+            try:
+                res = requests.get(f"{url}{ep}", headers=headers, timeout=4.0)
+                if res.status_code == 200:
+                    data = res.json() if res.headers.get("content-type", "").startswith("application/json") else {}
+                    return {
+                        "configured": True,
+                        "reachable": True,
+                        "url": url,
+                        "endpoint": ep,
+                        "model": data.get("model") or self.adapter_source,
+                        "status": "online",
+                    }
+            except Exception:
+                continue
+
+        return {"configured": True, "reachable": False, "url": url}
+
     def _init_storage(self) -> None:
         """Ensures the training data directories and files are initialized."""
         TRAINING_DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -81,7 +130,7 @@ class LLMEngine:
         """Returns the readiness status of the LLM system."""
         configured = (self.adapter_dir / "adapter_config.json").exists() or bool(
             self.adapter_source
-        )
+        ) or bool(self.remote_backend_url)
         dependencies_installed = False
         dep_error = None
         try:
@@ -96,29 +145,40 @@ class LLMEngine:
         dataset_size = self.get_training_sample_count()
         ecc_provider = os.getenv("LLM_PROVIDER")
 
+        remote_status = self._check_remote_backend_status() if self.remote_backend_url else None
+        is_remote_ready = bool(remote_status and remote_status.get("reachable", False))
+        is_loaded = (self._model is not None) or is_remote_ready
+
         active_mode = "Cognitive Socratic Engine (Fine-tuned Gemma format)"
-        if ecc_provider:
+        if self.remote_backend_url and is_remote_ready:
+            active_mode = f"Remote GPU LLM Backend ({self.remote_backend_url})"
+        elif ecc_provider:
             active_mode = f"ECC Enterprise Provider ({ecc_provider})"
         elif self._model:
             active_mode = "PEFT Adapter (Gemma-4B)"
 
+        model_name = remote_status.get("model") if is_remote_ready else self.adapter_source
+
         return {
-                "configured": configured,
-                "dependenciesInstalled": dependencies_installed,
-                "loaded": self._model is not None,
-                "available": self._model is not None,
-                "liveAiEnabled": self._model is not None,
-                 "model": self.adapter_source,
-                "baseModel": self.base_model,
-                "activeCheckpoint": self.active_checkpoint,
-                "trainingSamplesCollected": dataset_size,
-                "mode": active_mode,
-                "tools": [t.name for t in tool_registry.list_tools()],
-                "ecc_provider": ecc_provider,
-                "error": self.error or dep_error,
-                "modelOnly": os.getenv("LLM_ONLY_MODEL", "").lower()
-                    in {"1", "true", "yes"},
-                }
+            "configured": configured,
+            "dependenciesInstalled": dependencies_installed,
+            "loaded": is_loaded,
+            "available": is_loaded,
+            "liveAiEnabled": is_loaded,
+            "model": model_name,
+            "baseModel": self.base_model,
+            "activeCheckpoint": self.active_checkpoint,
+            "trainingSamplesCollected": dataset_size,
+            "mode": active_mode,
+            "tools": [t.name for t in tool_registry.list_tools()],
+            "ecc_provider": ecc_provider,
+            "remoteBackend": {
+                "url": self.remote_backend_url,
+                "reachable": is_remote_ready,
+            } if self.remote_backend_url else None,
+            "error": self.error or dep_error,
+            "modelOnly": os.getenv("LLM_ONLY_MODEL", "").lower() in {"1", "true", "yes"},
+        }
 
     def _try_load_peft(self) -> bool:
         """Load the published Hugging Face PEFT adapter once."""
@@ -178,6 +238,92 @@ class LLMEngine:
                 )
                 return False
 
+    def _call_remote_backend(
+        self,
+        subject: str,
+        question: str,
+        mode: str,
+        learner_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Forwards generation request to teammate's separate LLM backend (Modal, Hugging Face Spaces, or GPU host).
+        Ensures 100% interoperability with the separate LLM microservice.
+        """
+        url = self.remote_backend_url
+        if not url:
+            return None
+
+        import requests
+
+        headers = {"Content-Type": "application/json"}
+        token = (
+            os.getenv("LLM_BACKEND_TOKEN")
+            or os.getenv("HF_TOKEN")
+            or os.getenv("ADMIN_TOKEN")
+        )
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+            headers["X-Admin-Token"] = token
+
+        timeout = float(os.getenv("LLM_BACKEND_TIMEOUT", "35.0"))
+        payload = {
+            "question": question,
+            "subject": subject,
+            "mode": mode,
+            "learner_id": learner_id,
+        }
+
+        try:
+            resp = requests.post(
+                f"{url}/api/llm/answer",
+                json=payload,
+                headers=headers,
+                timeout=timeout,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("answer"):
+                    sample_id = self.log_training_sample(
+                        subject=subject,
+                        instruction=f"Diagnose the {subject} query using remote LLM backend in {mode} mode.",
+                        user_input=question,
+                        model_output=data["answer"],
+                        learner_id=learner_id,
+                        metadata={
+                            "source": "remote_llm_backend",
+                            "remote_url": url,
+                            "remote_model": data.get("model", self.adapter_source),
+                            **(data.get("metadata") or {}),
+                        },
+                    )
+                    data["sample_id"] = sample_id
+                    data["status"] = "success"
+                    return data
+            elif resp.status_code == 503 and os.getenv("LLM_ONLY_MODEL", "").lower() in {"1", "true", "yes"}:
+                return resp.json()
+            else:
+                self.error = f"Remote LLM at {url} returned HTTP {resp.status_code}: {resp.text[:200]}"
+        except Exception as exc:
+            self.error = f"Remote LLM connection to {url} failed: {exc}"
+            if os.getenv("LLM_ONLY_MODEL", "").lower() in {"1", "true", "yes"}:
+                return {
+                    "answer": (
+                        "### Remote LLM Backend Unavailable\n\n"
+                        f"Could not connect to the remote LLM backend at `{url}`.\n"
+                        f"Runtime reason: {type(exc).__name__}: {exc}\n\n"
+                        "Check that your Modal / Hugging Face Spaces LLM backend is active and reachable."
+                    ),
+                    "model": f"Remote LLM ({url})",
+                    "sample_id": "",
+                    "metadata": {
+                        "source": "model_unavailable",
+                        "remote_url": url,
+                        "error": str(exc),
+                    },
+                    "status": "model_unavailable",
+                }
+        return None
+
     def answer_socratic(
         self,
         subject: str,
@@ -187,8 +333,15 @@ class LLMEngine:
     ) -> Dict[str, Any]:
         """
         Generates Socratic tutoring response adhering to Bloom 2-Sigma principles.
-        Utilizes ECC PromptBuilder, tool executor, multi-provider resolver, and continuous learning logger.
+        Utilizes remote LLM backend (Modal / HF Spaces), ECC multi-provider harness,
+        local PEFT Gemma adapter, or Cognitive Socratic Engine.
         """
+        # 1. Try remote separate LLM backend if configured (e.g. Modal app, HF Space GPU, remote server)
+        if self.remote_backend_url:
+            remote_res = self._call_remote_backend(subject, question, mode, learner_id)
+            if remote_res is not None:
+                return remote_res
+
         system_prompt = (
             "You are Misconception Tutor, a patient Socratic math tutor. "
             f"Subject: {subject}. Mode: {mode}. Explain the student's reasoning, identify the first "
@@ -201,7 +354,7 @@ class LLMEngine:
             tools=tool_registry.list_tools(),
         )
 
-        # 1. Try ECC multi-provider if configured
+        # 2. Try ECC multi-provider if configured
         provider_name = os.getenv("LLM_PROVIDER")
         if provider_name:
             try:
@@ -234,7 +387,7 @@ class LLMEngine:
             except Exception as e:
                 self.error = f"ECC provider '{provider_name}' error: {e}. Falling back to local engine."
 
-        # 2. Try local PEFT adapter if weights are smudged/loaded
+        # 3. Try local PEFT adapter if weights are smudged/loaded
         if self._try_load_peft() and self._model and self._tokenizer:
             try:
                 ans_text = self._generate_peft(subject, question, mode)
@@ -255,7 +408,7 @@ class LLMEngine:
             except Exception as e:
                 self.error = f"PEFT generation error: {e}. Falling back to Cognitive Socratic Engine."
 
-        # 3. Do not present deterministic output as the user's model when
+        # 4. Do not present deterministic output as the user's model when
         # model-only mode is requested.
         if os.getenv("LLM_ONLY_MODEL", "").lower() in {"1", "true", "yes"}:
             reason = self.error or "The configured adapter could not be loaded."
@@ -265,7 +418,7 @@ class LLMEngine:
                     "Your Gemma adapter was not used for this answer. "
                     f"Runtime reason: {reason}\n\n"
                     "Run this app on a CUDA machine with the notebook-compatible "
-                    "Unsloth/PEFT stack, then try again."
+                    "Unsloth/PEFT stack, or set LLM_BACKEND_URL to your separate Modal/HF GPU backend."
                 ),
                 "model": self.adapter_source,
                 "sample_id": "",
@@ -277,7 +430,7 @@ class LLMEngine:
                 "status": "model_unavailable",
             }
 
-        # 4. High-precision cognitive Socratic generator
+        # 5. High-precision cognitive Socratic generator
         ans_text, metadata = self._generate_cognitive_socratic(subject, question, mode)
         sample_id = self.log_training_sample(
             subject=subject,
@@ -296,18 +449,64 @@ class LLMEngine:
         }
 
     def _generate_peft(self, subject: str, question: str, mode: str) -> str:
-        """Inference with PEFT adapter."""
+        """Inference with PEFT adapter grounded with exact mathematical & AST execution facts."""
         tokenizer = self._tokenizer
         model = self._model
-        system = (
-            "You are Misconception Tutor, a patient Socratic tutor. "
-            f"Subject: {subject}. Explain the student's reasoning, identify the first "
-            "divergence, and teach the correction without simply doing homework "
-            f"for them. Requested mode: {mode}. Use concise Markdown and finish with a Key Takeaway."
+
+        # Tool Grounding: Pre-compute exact facts to prevent mental math / hallucinated execution slips
+        grounding_facts: List[str] = []
+        is_code = subject.lower() in ["python", "coding", "programming", "computer science", "cs"] or (
+            any(k in question for k in ["def ", "import ", "print(", "```", "SyntaxError", "ZeroDivisionError"])
         )
+        if is_code:
+            try:
+                from backend.sandbox import run_student_code
+                from backend.python_debugger import python_debugger
+                code, _, _ = python_debugger.split_input(question)
+                if code:
+                    exec_res = run_student_code(code)
+                    if not exec_res["success"]:
+                        grounding_facts.append(
+                            f"Execution error: {exec_res.get('error_type')} at line {exec_res.get('line')}: {exec_res.get('error_message')}"
+                        )
+                    else:
+                        stdout = exec_res.get("stdout", "").strip()
+                        grounding_facts.append(f"Execution output: clean execution with stdout '{stdout}'")
+            except Exception:
+                pass
+        else:
+            match = re.search(r"(\d+)\s*/\s*(\d+)\s*([\+\-\*\/÷])\s*(\d+)\s*/\s*(\d+)", question)
+            if match:
+                try:
+                    from backend import backend_code
+                    a, b, op, c, d = int(match.group(1)), int(match.group(2)), match.group(3), int(match.group(4)), int(match.group(5))
+                    is_div = op in ["/", "÷"]
+                    correct = backend_code.correct_div(a, b, c, d) if is_div else backend_code.correct_add(a, b, c, d)
+                    grounding_facts.append(
+                        f"Exact mathematical ground truth: {a}/{b} {op} {c}/{d} = {backend_code.format_fraction(correct)}"
+                    )
+                except Exception:
+                    pass
+
+        facts_block = ""
+        if grounding_facts:
+            facts_block = "\nVerified calculation/execution facts:\n- " + "\n- ".join(grounding_facts) + "\n"
+
+        system = (
+            "You are Misconception Tutor, a patient Socratic tutor for mathematics and coding. "
+            f"Subject: {subject}. Mode: {mode}.\n"
+            "Pedagogical Principles:\n"
+            "1. Do not simply do homework for the student; teach the conceptual foundation.\n"
+            "2. Identify the first divergence or buggy mental rule.\n"
+            "3. Provide a clear real-world intuition or counter-example.\n"
+            "4. Show the step-by-step correction in bite-sized stages.\n"
+            "5. Conclude with one short practice challenge and a Key Takeaway.\n"
+            "Structure your response with clear markdown headings."
+        )
+        user_content = question + facts_block
         messages = [
             {"role": "system", "content": system},
-            {"role": "user", "content": question},
+            {"role": "user", "content": user_content},
         ]
         if hasattr(tokenizer, "apply_chat_template"):
             inputs = tokenizer.apply_chat_template(
@@ -319,7 +518,7 @@ class LLMEngine:
             )
         else:
             inputs = tokenizer(
-                f"System: {system}\nUser: {question}\nAssistant:",
+                f"System: {system}\nUser: {user_content}\nAssistant:",
                 return_tensors="pt",
             )
         import torch
@@ -352,9 +551,10 @@ class LLMEngine:
         if fraction_pattern or "fraction" in q_lower or any(k in q_lower for k in ["add across", "common denominator", "flip"]):
             return self._socratic_math_fraction(question)
 
-        # Case 2: Quadratic factorization
-        if any(k in q_lower for k in ["factor", "2x²", "2x^2", "quadratic", "middle term", "roots"]):
+        # Case 2: Quadratic factorization & AC Method concept
+        if any(k in q_lower for k in ["factor", "2x²", "2x^2", "middle term", "roots", "ac method", "signs feel wrong"]):
             metadata["topic"] = "quadratic_factorization"
+            metadata["misconception"] = "quadratic_ac_method"
             response = (
                 "### 🔍 First Divergence: Middle Term Coefficient\n\n"
                 "In factoring a quadratic $ax^2 + bx + c$, the two split terms must multiply to $a \\cdot c$ and sum to $b$.\n\n"
@@ -373,6 +573,14 @@ class LLMEngine:
                 "Always verify factoring with the **'AC Method'**: Find factors of $a \\cdot c$ that add to $b$. To check signs safely, expand $(A + B)(C + D)$ with FOIL before solving for roots."
             )
             return response, metadata
+
+        # Case 2b: Dynamic Equation & Problem Solving (Linear, Arbitrary Quadratic, Percentage, Arithmetic)
+        from backend.general_solver import general_solver
+        if (
+            general_solver.can_solve(question)
+            and ("=" in question or "%" in question or " of " in q_lower)
+        ):
+            return general_solver.solve_and_explain(question)
 
         # Case 3: Recursive Fibonacci / Stack Overflow
         if any(k in q_lower for k in ["fib", "recursion", "memoization", "recursionerror", "stack overflow"]):
@@ -546,6 +754,7 @@ class LLMEngine:
                 )
                 return response, metadata
             else:
+                metadata["misconception"] = "M4_div_mult_across" if is_div else "M1_add_across"
                 response = (
                     f"### 🔍 Socratic Fraction Analysis\n\n"
                     f"For the problem **${a}/{b} {'÷' if is_div else '+'} {c}/{d}$**:\n\n"
@@ -560,6 +769,7 @@ class LLMEngine:
                 return response, metadata
 
         # Default fraction overview
+        metadata["misconception"] = "M1_add_across"
         response = (
             "### 🔍 Socratic Fraction Diagnosis\n\n"
             "When combining fractions, the denominator represents **the size of each equal piece**, while the numerator counts **how many pieces you have**.\n\n"

@@ -98,6 +98,8 @@ def backend_status():
         "model": llm_stat["model"],
         "llmLoaded": llm_stat["loaded"],
         "llmError": llm_stat["error"],
+        "mode": llm_stat.get("mode"),
+        "remoteBackend": llm_stat.get("remoteBackend"),
         "trainingMode": "offline_kaggle",
         "trainingSamplesCollected": (
             llm_stat["trainingSamplesCollected"]
@@ -388,12 +390,14 @@ def llm_answer():
             mode=mode,
             learner_id=learner_id,
         )
+        if isinstance(result, tuple) and len(result) == 2 and result[1] == 503:
+            return jsonify(result[0]), 503
         if result.get("status") == "model_unavailable":
             return jsonify(result), 503
         metadata = result.get("metadata") or {}
         misconception = classify_misconception(subject, question, metadata)
         result["misconception"] = misconception
-        result["practice_set"] = generate_practice_set(subject, misconception, count=6)
+        result["practice_set"] = result.get("practice_set") or generate_practice_set(subject, misconception, count=6)
         return jsonify(result)
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500

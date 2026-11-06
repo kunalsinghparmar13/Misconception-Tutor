@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 
 import pytest
 
@@ -56,7 +57,7 @@ def test_runaway_output_is_rejected():
     assert res["error_type"] == "OutputLimitExceeded"
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX resource limits only")
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux kernel RLIMIT_AS address space limit only")
 def test_memory_bomb_is_rejected():
     res = run_student_code("data = [0] * 10**9")
     assert res["success"] is False
