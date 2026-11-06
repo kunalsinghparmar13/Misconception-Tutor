@@ -170,9 +170,11 @@ class PracticeAgent(Agent):
         items: List[PracticeItem] = []
         seen = list(avoid or [])
         attempts = 0
-        while len(items) < count and attempts < max(2, -(-count // self.batch_size) + 1):
+        while len(items) < count and attempts < count + 1:
             attempts += 1
-            want = min(self.batch_size, count - len(items))
+            # code exercises are ~4x longer than maths ones, so ask for one at a time
+            size = 1 if grounding.is_code else self.batch_size
+            want = min(size, count - len(items))
             batch = self._run_batch(question, grounding, misconception, want, seen, f"{id_prefix}{attempts}")
             for item in batch:
                 if item.prompt not in seen:
