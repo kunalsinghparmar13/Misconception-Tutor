@@ -55,11 +55,18 @@ class UnslothBackend(_BaseBackend):
         from unsloth import FastModel  # type: ignore
         from unsloth.chat_templates import get_chat_template  # type: ignore
 
+        import torch
+
         self.path = path or adapter_location()
+        # T4/P100 (Kaggle, Colab free) have no native bfloat16; running bf16 layers there is very slow.
+        dtype = None
+        if torch.cuda.is_available() and not torch.cuda.is_bf16_supported():
+            dtype = torch.float16
         self.model, tokenizer = FastModel.from_pretrained(
             model_name=self.path,
             max_seq_length=max_seq_length,
             load_in_4bit=True,
+            dtype=dtype,
             token=os.getenv("HF_TOKEN") or None,
         )
         FastModel.for_inference(self.model)

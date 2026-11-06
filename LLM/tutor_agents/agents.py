@@ -115,7 +115,24 @@ class SolverAgent(Agent):
     def run(self, question: str, grounding: gr.Grounding, feedback: Optional[List[str]] = None) -> Solution:
         is_code = grounding.is_code
         system = prompts.SOLVER_CODE if is_code else prompts.SOLVER_MATH
-        user = f"Learner's message:\n{question}\n"
+        # The adapter was fine-tuned to answer learners Socratically, so a learner's chatty message
+        # ("my answer was ...") makes it ask a question back. Give the solver a direct task instead,
+        # repeat the format in the user turn (small models weight it more than the system turn).
+        if is_code:
+            user = (
+                "Task: write the corrected, complete Python program for the learner's problem below. "
+                "Do not ask questions. Start your reply with 'Corrected code:'.\n\n"
+                f"Learner's problem:\n{question}\n"
+            )
+        else:
+            problem = grounding.expression or question
+            user = (
+                "Task: solve this maths problem yourself and show the steps. Do not ask the learner anything. "
+                "Start your reply with 'Final answer:', then 'Steps:' as a numbered list, then 'Check:'.\n\n"
+                f"Problem: {problem}\n"
+            )
+            if grounding.expression and grounding.expression != question:
+                user += f"(The learner wrote: {question})\n"
         if grounding.facts_block():
             user += f"\n{grounding.facts_block()}\n"
         if feedback:
@@ -148,6 +165,34 @@ class PracticeAgent(Agent):
         avoid: Optional[List[str]] = None,
         id_prefix: str = "pr",
     ) -> List[PracticeItem]:
+        # Ask in small batches: one long generation can exceed the ~100 s per-request limit of free
+        # tunnels (Cloudflare 524) on a T4, and short batches also parse more reliably.
+        items: List[PracticeItem] = []
+        seen = list(avoid or [])
+        attempts = 0
+        while len(items) < count and attempts < max(2, -(-count // self.batch_size) + 1):
+            attempts += 1
+            want = min(self.batch_size, count - len(items))
+            batch = self._run_batch(question, grounding, misconception, want, seen, f"{id_prefix}{attempts}")
+            for item in batch:
+                if item.prompt not in seen:
+                    seen.append(item.prompt)
+                    items.append(item)
+        for i, item in enumerate(items, start=1):
+            item.id = f"{id_prefix}_{i}"
+        return items[:count]
+
+    batch_size = 3
+
+    def _run_batch(
+        self,
+        question: str,
+        grounding: gr.Grounding,
+        misconception: str,
+        count: int,
+        avoid: List[str],
+        id_prefix: str,
+    ) -> List[PracticeItem]:
         label = misconception or grounding.misconception_id or "the mistake in the learner's work"
         system = (prompts.PRACTICE_CODE if grounding.is_code else prompts.PRACTICE_MATH).format(count=count, misconception=label)
         user = f"The learner's original problem:\n{_clip(question, 1200)}\n"
@@ -155,7 +200,11 @@ class PracticeAgent(Agent):
             user += f"\n{grounding.facts_block()}\n"
         if avoid:
             user += "\nDo not repeat these problems:\n" + "\n".join(f"- {_clip(a, 120)}" for a in avoid) + "\n"
-        res = self._ask(system, user)
+        res = self.client.chat(
+            [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            max_tokens=min(self.max_tokens, 200 * count + 120),
+            temperature=self.temperature,
+        )
         items: List[PracticeItem] = []
         for i, raw in enumerate(parsing.parse_practice(res.text), start=1):
             if grounding.is_code:
@@ -173,7 +222,7 @@ class PracticeAgent(Agent):
                     id=f"{id_prefix}_{i}", type="math", prompt=raw["question"],
                     correct_answer=raw["answer"].strip(), explanation=raw.get("why", ""),
                 ))
-        return items[:count]
+        return items  # keep extras; run() caps the total
 
 
 # ------------------------------------------------------------------------------ agent 4

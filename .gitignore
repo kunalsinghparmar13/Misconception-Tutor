@@ -13,3 +13,4 @@ dist/
 *.log
 
 LLM/checkpoint-*/
+.env.kaggle

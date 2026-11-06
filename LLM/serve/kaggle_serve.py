@@ -39,6 +39,9 @@ def find_adapter() -> str:
 
 
 def main() -> None:
+    # Kaggle's "GPU T4 x2" would split the 4-bit model across both cards, which only adds
+    # cross-GPU traffic. One T4 holds it comfortably.
+    os.environ.setdefault("CUDA_VISIBLE_DEVICES", "0")
     subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-U", "unsloth", "flask", "requests"], check=True)
 
     adapter = find_adapter()
