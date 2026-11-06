@@ -55,3 +55,28 @@ def test_503_until_loaded(monkeypatch):
     importlib.reload(model_server)
     res = model_server.app.test_client().post("/v1/chat/completions", json={"messages": [{"role": "user", "content": "hi"}]})
     assert res.status_code == 503
+
+
+def test_keepalive_mode_streams_padding_then_json(monkeypatch):
+    import json as _json
+
+    from serve import model_server
+
+    class Slow:
+        name = "slow"
+
+        def generate(self, messages, max_new_tokens=64, temperature=0.0):
+            import time as _t
+
+            _t.sleep(0.3)
+            return "done"
+
+    monkeypatch.setattr(model_server, "KEEPALIVE_SECONDS", 0.1)
+    monkeypatch.setitem(model_server._state, "backend", Slow())
+    monkeypatch.delenv("MODEL_SERVER_TOKEN", raising=False)
+    client = model_server.app.test_client()
+    res = client.post("/v1/chat/completions", json={"messages": [{"role": "user", "content": "hi"}]},
+                      headers={"X-Keepalive": "1"})
+    raw = res.get_data(as_text=True)
+    assert res.status_code == 200 and raw.startswith(" ") and len(raw) - len(raw.lstrip()) >= 2
+    assert _json.loads(raw)["choices"][0]["message"]["content"] == "done"

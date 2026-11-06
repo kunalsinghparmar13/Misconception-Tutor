@@ -33,7 +33,7 @@ _URL_ENV_NAMES = (
     "MODAL_APP_URL",
     "HF_SPACE_URL",
 )
-_RETRY_STATUS = {502, 503, 504, 524}
+_RETRY_STATUS = {502, 503, 504}
 
 
 class ModelUnavailable(RuntimeError):
@@ -207,7 +207,9 @@ class ModelClient:
         return ChatResult(text=text, model=self.model_name, seconds=time.time() - started, backend=mode)
 
     def _headers(self) -> Dict[str, str]:
-        headers = {"Content-Type": "application/json", "Accept": "application/json"}
+        # X-Keepalive: our model server then trickles spaces while generating, so free tunnels
+        # (Cloudflare's ~100 s idle limit) don't cut long generations off. Other servers ignore it.
+        headers = {"Content-Type": "application/json", "Accept": "application/json", "X-Keepalive": "1"}
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
         return headers
@@ -237,8 +239,15 @@ class ModelClient:
                 continue
             if res.status_code == 200:
                 try:
-                    return res.json()["choices"][0]["message"]["content"]
-                except (ValueError, KeyError, IndexError, TypeError) as exc:
+                    body = res.json()
+                except ValueError as exc:
+                    raise ModelUnavailable(f"Unexpected response from model server: {exc}") from exc
+                if isinstance(body, dict) and body.get("error"):  # keep-alive mode reports errors in the body
+                    last_error = str(body["error"])[:200]
+                    break
+                try:
+                    return body["choices"][0]["message"]["content"]
+                except (KeyError, IndexError, TypeError) as exc:
                     raise ModelUnavailable(f"Unexpected response from model server: {exc}") from exc
             last_error = f"HTTP {res.status_code}: {res.text[:200]}"
             if res.status_code in _RETRY_STATUS and attempt == 0:

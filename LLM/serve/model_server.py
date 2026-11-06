@@ -24,6 +24,7 @@ Environment
 from __future__ import annotations
 
 import hmac
+import json
 import os
 import sys
 import threading
@@ -32,13 +33,14 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from flask import Flask, jsonify, request
+from flask import Flask, Response, jsonify, request
 
 LLM_DIR = Path(__file__).resolve().parents[1]
 if str(LLM_DIR) not in sys.path:
     sys.path.insert(0, str(LLM_DIR))
 
 MAX_TOKENS_CAP = 1024
+KEEPALIVE_SECONDS = 15
 MAX_PROMPT_CHARS = 24_000
 ALLOWED_ROLES = {"system", "user", "assistant"}
 
@@ -147,18 +149,44 @@ def chat_completions():
     if backend is None:
         return jsonify({"error": _state["error"] or "Model is not loaded yet."}), 503
     started = time.time()
-    try:
-        text = backend.generate(params["messages"], max_new_tokens=params["max_tokens"], temperature=params["temperature"])
-    except Exception as exc:  # noqa: BLE001
-        return jsonify({"error": f"Generation failed: {type(exc).__name__}: {exc}"}), 500
-    return jsonify({
-        "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
-        "object": "chat.completion",
-        "created": int(started),
-        "model": model_name(),
-        "choices": [{"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": "stop"}],
-        "usage": {"latency_seconds": round(time.time() - started, 2)},
-    })
+
+    def completion(text: str) -> Dict[str, Any]:
+        return {
+            "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
+            "object": "chat.completion",
+            "created": int(started),
+            "model": model_name(),
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": "stop"}],
+            "usage": {"latency_seconds": round(time.time() - started, 2)},
+        }
+
+    def run() -> Dict[str, Any]:
+        try:
+            text = backend.generate(params["messages"], max_new_tokens=params["max_tokens"], temperature=params["temperature"])
+        except Exception as exc:  # noqa: BLE001
+            return {"error": f"Generation failed: {type(exc).__name__}: {exc}"}
+        return completion(text)
+
+    if request.headers.get("X-Keepalive") != "1":
+        body = run()
+        return jsonify(body), (500 if "error" in body else 200)
+
+    # Keep-alive mode: free tunnels (Cloudflare quick tunnels) drop requests that send no bytes for
+    # ~100 s (HTTP 524). Write a space every few seconds while generating, then the JSON body;
+    # leading whitespace is valid JSON. Errors arrive as {"error": ...} with status 200.
+    result: Dict[str, Any] = {}
+    worker = threading.Thread(target=lambda: result.update(run()), daemon=True)
+    worker.start()
+
+    def stream():
+        yield " "
+        while worker.is_alive():
+            worker.join(timeout=KEEPALIVE_SECONDS)
+            if worker.is_alive():
+                yield " "
+        yield json.dumps(result)
+
+    return Response(stream(), mimetype="application/json", headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
 
 
 def main() -> None:
