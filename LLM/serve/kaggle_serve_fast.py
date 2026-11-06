@@ -140,7 +140,8 @@ def self_test(token: str) -> None:
     secs = time.time() - t
     print(f"Self-test ({toks} tokens in {secs:.1f}s = {toks / max(secs, 0.01):.1f} tok/s): {text[:200]}", flush=True)
     if not text.strip():
-        raise RuntimeError("empty self-test reply")
+        reasoning = (body["choices"][0]["message"].get("reasoning_content") or "")[:200]
+        raise RuntimeError(f"empty self-test reply (reasoning_content: {reasoning!r})")
 
 
 def main() -> None:
@@ -157,7 +158,13 @@ def main() -> None:
             "--host", "127.0.0.1", "--port", str(PORT), "--api-key", token,
             "-ngl", "999", "-c", os.getenv("LLAMA_CTX", "8192"), "-np", os.getenv("LLAMA_PARALLEL", "2"),
             "--jinja", "--alias", "misconception-tutor-gemma4-e4b", "--no-webui",
+            # Gemma 4 "thinks" by default in llama.cpp, which spends the whole token budget on hidden
+            # reasoning and returns empty content. The tutor adapter was trained without thinking.
+            "--chat-template-kwargs", '{"enable_thinking": false}',
         ]
+        template = Path(adapter) / "chat_template.jinja"
+        if template.exists():  # the exact template the adapter was fine-tuned with
+            cmd += ["--chat-template-file", str(template)]
         env = dict(os.environ, CUDA_VISIBLE_DEVICES=os.getenv("CUDA_VISIBLE_DEVICES", "0"))
         print("$", " ".join(c if c != token else "<token>" for c in cmd), flush=True)
         proc = subprocess.Popen(cmd, env=env)
