@@ -111,7 +111,7 @@ def self_test(token: str) -> None:
 
 
 def main() -> None:
-    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-U", "huggingface_hub", "requests"], check=True)
+    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "huggingface_hub<2", "requests"], check=True)  # <2: transformers 5.x pins it
     adapter = kaggle_serve.find_adapter()
     token = secrets.token_urlsafe(24)
     print("Adapter:", adapter, flush=True)
