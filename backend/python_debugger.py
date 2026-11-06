@@ -10,12 +10,10 @@ cognitive replays and verified solutions.
 from __future__ import annotations
 
 import ast
-import contextlib
-import io
 import re
-import sys
-import traceback
 from typing import Any, Dict, List, Optional, Tuple
+
+from backend.sandbox import run_student_code
 
 
 class PythonCodeDebugger:
@@ -287,41 +285,8 @@ class PythonCodeDebugger:
         return None
 
     def _safe_execute(self, code: str) -> Dict[str, Any]:
-        """Safely executes the snippet with standard library guards and stdout redirection."""
-        import builtins
-        stdout_capture = io.StringIO()
-        safe_builtins = {
-            k: getattr(builtins, k)
-            for k in dir(builtins)
-            if not k.startswith("__") and k not in ["eval", "exec", "open", "input", "compile", "breakpoint", "quit", "exit"]
-        }
-        safe_globals: Dict[str, Any] = {
-            "__builtins__": safe_builtins,
-            "__name__": "__main__",
-        }
-
-        try:
-            with contextlib.redirect_stdout(stdout_capture):
-                compiled = compile(code, "<student_code>", "exec")
-                exec(compiled, safe_globals)
-            return {
-                "success": True,
-                "stdout": stdout_capture.getvalue(),
-                "globals": {k: v for k, v in safe_globals.items() if not k.startswith("__")},
-            }
-        except Exception as exc:
-            tb = traceback.extract_tb(sys.exc_info()[2])
-            line = 1
-            for frame in tb:
-                if frame.filename == "<student_code>":
-                    line = frame.lineno
-            return {
-                "success": False,
-                "error_type": type(exc).__name__,
-                "error_message": str(exc),
-                "line": line,
-                "stdout": stdout_capture.getvalue(),
-            }
+        """Runs the snippet in an isolated, resource-limited child process."""
+        return run_student_code(code)
 
     def _format_syntax_explanation(self, code: str, err: Dict[str, Any]) -> str:
         """Formats an intuitive Socratic diagnosis for syntax slips."""
