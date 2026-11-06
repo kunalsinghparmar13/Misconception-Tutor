@@ -47,8 +47,8 @@ def build_llama_server() -> Path:
     WORK.mkdir(parents=True, exist_ok=True)
     if not LLAMA_DIR.exists():
         sh(["git", "clone", "--depth", "1", "https://github.com/ggml-org/llama.cpp", str(LLAMA_DIR)])
-    # sm_75 = T4 (P100 is sm_60); building one architecture and one target keeps this to ~10 minutes.
-    arch = os.getenv("CUDA_ARCH", "75;60")
+    # sm_75 = T4. (CUDA 13 dropped sm_60, so P100 is not supported here.) One arch + one target ≈ 10 minutes.
+    arch = os.getenv("CUDA_ARCH", "75")
     sh(["cmake", "-S", str(LLAMA_DIR), "-B", str(LLAMA_DIR / "build"), "-DGGML_CUDA=ON",
         f"-DCMAKE_CUDA_ARCHITECTURES={arch}", "-DLLAMA_CURL=OFF", "-DCMAKE_BUILD_TYPE=Release"])
     sh(["cmake", "--build", str(LLAMA_DIR / "build"), "--config", "Release", "-j", str(os.cpu_count() or 4),
