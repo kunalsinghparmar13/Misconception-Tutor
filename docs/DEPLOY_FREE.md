@@ -101,3 +101,14 @@ and Railway (free tiers and limits change - check each). On every host you only 
 
 Because the Kaggle tunnel address changes every restart, update `LLM_BACKEND_URL` / `LLM_BACKEND_TOKEN` on your host each time
 (Modal's address is permanent, so it avoids this).
+
+## 6. Run everything on your own computer (no deploy)
+
+```bash
+export LLM_BACKEND_URL=https://<your-model-server>   # Kaggle tunnel / Modal URL / your own GPU PC
+export LLM_BACKEND_TOKEN=<its token>
+./scripts/run_local.sh        # then open http://localhost:8000
+```
+The script creates a virtual environment, installs the requirements and starts the app on `127.0.0.1:8000` only.
+The model still needs a GPU somewhere. A MacBook cannot run the current Unsloth/bitsandbytes build, so on a Mac the
+model stays on Kaggle (or Modal) until an MLX version of the adapter exists.
