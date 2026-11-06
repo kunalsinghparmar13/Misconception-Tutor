@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional
 
@@ -68,6 +69,15 @@ class PracticeItem:
         return asdict(self)
 
 
+def fast_mode() -> bool:
+    """Fast mode (default on) trades some depth for speed on a small free GPU. TUTOR_FAST=0 turns it off."""
+    return os.getenv("TUTOR_FAST", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
+# Output-token budgets in fast mode. Generation time is roughly proportional to tokens on a free T4.
+FAST_TOKENS = {"explainer": 260, "solver": 300, "practice": 420, "reviewer": 120}
+
+
 class Agent:
     name = "agent"
     max_tokens = 512
@@ -75,6 +85,8 @@ class Agent:
 
     def __init__(self, client: ModelClient) -> None:
         self.client = client
+        if fast_mode() and self.name in FAST_TOKENS:
+            self.max_tokens = min(self.max_tokens, FAST_TOKENS[self.name])
 
     def _ask(self, system: str, user: str) -> ChatResult:
         return self.client.chat(
