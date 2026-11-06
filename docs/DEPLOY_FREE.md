@@ -27,6 +27,23 @@ Recommended: Modal for the live URL, Kaggle when the Modal credit runs out or fo
 ### Option A - Kaggle notebook + Cloudflare tunnel (free, temporary)
 Best fit for you: your adapter was trained on Kaggle.
 
+**Fastest (recommended): llama.cpp launcher.** About 25-35 tokens/s on a T4 and a full four-agent answer in ~15 s,
+versus ~0.5 tokens/s and several minutes with Unsloth (which runs Gemma 4 in float32 on a T4). It uses the same
+adapter, converted to GGUF and applied with `--lora` on the Q4_K_M base model; nothing is retrained.
+
+New notebook -> Accelerator **GPU T4**, **Internet on**, add your adapter dataset as input, then run:
+```
+!rm -rf /kaggle/working/app && git clone --depth 1 https://github.com/kunalsinghparmar13/Misconception-Tutor.git /kaggle/working/app
+!python /kaggle/working/app/LLM/serve/kaggle_serve_fast.py
+```
+The first run in a session compiles llama.cpp with CUDA (roughly 15-25 minutes on Kaggle's 4 CPUs), downloads the base
+GGUF and converts the adapter; it then prints `LLM_BACKEND_URL` / `LLM_BACKEND_TOKEN`. If any step fails it falls back to
+the Unsloth server automatically. To survive a browser disconnect, start it detached from the console instead:
+`subprocess.Popen("cd /kaggle/working && nohup python -u app/LLM/serve/kaggle_serve_fast.py > serve.log 2>&1 &", shell=True, start_new_session=True)`
+and read `/kaggle/working/serve.log`.
+
+**Slower alternative (Unsloth):**
+
 1. (Recommended) Upload the adapter to the Hugging Face Hub once, so notebooks don't pull 139 MB from GitHub LFS (small free bandwidth):
    `HF_TOKEN=hf_xxx python scripts/push_adapter_to_hf.py <user>/misconception-tutor-gemma4-e4b`
 2. On Kaggle: New Notebook -> import `LLM/serve/serve-model.ipynb` -> Accelerator **GPU T4/P100**, **Internet on**.
