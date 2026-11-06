@@ -11,6 +11,7 @@ These classes need a CUDA GPU and are not exercised by the unit tests.
 from __future__ import annotations
 
 import os
+import time
 import threading
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -77,13 +78,20 @@ class UnslothBackend(_BaseBackend):
         )
         inputs = {k: v.to(self.model.device) if hasattr(v, "to") else v for k, v in inputs.items()}
         kwargs = {"max_new_tokens": int(max_new_tokens), "use_cache": True}
+        # Hard stop so one slow call can never hold the GPU for minutes and queue everything behind it.
+        kwargs["max_time"] = float(os.getenv("LLM_MAX_GEN_SECONDS", "90"))
         if temperature and temperature > 0:
             kwargs.update(do_sample=True, temperature=float(temperature), top_p=0.95)
         else:
             kwargs["do_sample"] = False
+        started = time.time()
         with torch.inference_mode():
             output = self.model.generate(**inputs, **kwargs)
         new_tokens = output[0][inputs["input_ids"].shape[1]:]
+        secs = max(time.time() - started, 1e-6)
+        self.last_stats = {"prompt_tokens": int(inputs["input_ids"].shape[1]), "new_tokens": int(len(new_tokens)), "seconds": round(secs, 2),
+                           "tokens_per_second": round(len(new_tokens) / secs, 2)}
+        print(f"[gen] {self.last_stats}", flush=True)
         return self.tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
 
 

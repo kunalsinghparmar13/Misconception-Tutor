@@ -45,6 +45,9 @@ ALLOWED_ROLES = {"system", "user", "assistant"}
 app = Flask(__name__)
 _state: Dict[str, Any] = {"backend": None, "error": None, "loading": False}
 _state_lock = threading.Lock()
+_queue_lock = threading.Lock()
+_waiting = 0  # requests running or queued for the single GPU
+MAX_WAITING = int(os.getenv("MODEL_MAX_QUEUE", "3"))
 
 
 def model_name() -> str:
@@ -147,10 +150,18 @@ def chat_completions():
     if backend is None:
         return jsonify({"error": _state["error"] or "Model is not loaded yet."}), 503
     started = time.time()
+    with _queue_lock:
+        global _waiting
+        if _waiting >= MAX_WAITING:
+            return jsonify({"error": "Model is busy; try again in a moment."}), 503
+        _waiting += 1
     try:
         text = backend.generate(params["messages"], max_new_tokens=params["max_tokens"], temperature=params["temperature"])
     except Exception as exc:  # noqa: BLE001
         return jsonify({"error": f"Generation failed: {type(exc).__name__}: {exc}"}), 500
+    finally:
+        with _queue_lock:
+            _waiting -= 1
     return jsonify({
         "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
         "object": "chat.completion",
