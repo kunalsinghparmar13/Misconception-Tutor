@@ -42,13 +42,22 @@ register_security_middleware(app)
 backend_code.init_db()
 
 
+@app.after_request
+def add_no_cache_headers(response):
+    """Enforce fresh asset downloads for responsive UI changes."""
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
+
 # ==============================================================================
 # SECTION 1: STATIC & ASSET ROUTES (Serving the approved UI/UX)
 # ==============================================================================
 
 @app.get("/")
 def index():
-    """Serves the Sikora AI interface."""
+    """Serves the Sikora AI interface (no-cache headers come from add_no_cache_headers)."""
     return send_from_directory(UI_DIR, "index.html")
 
 

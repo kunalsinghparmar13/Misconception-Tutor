@@ -511,6 +511,8 @@
     if (!question) { textarea.focus(); return; }
     if (busy) return;
     const subject = activeSubject();
+    textarea.value = '';
+    textarea.dispatchEvent(new Event('input')); // index.html resizes the box and greys out Send
     setBusy(true);
     buildPanels(question);
     results.scrollIntoView({ behavior: 'smooth', block: 'start' });
