@@ -475,6 +475,9 @@
     const question = textarea.value.trim();
     if (!question) { textarea.focus(); return; }
     if (busy) return;
+    textarea.value = '';
+    textarea.style.height = 'auto';
+    updateCounter();
     setBusy(true);
     buildPanels();
     results.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -566,10 +569,13 @@
   textarea.addEventListener('input', updateCounter);
   textarea.addEventListener('keydown', (event) => {
     if (event.isComposing) return;
-    if (event.key === 'Enter') {
+    const isEnter = event.key === 'Enter' || event.code === 'Enter' || event.code === 'NumpadEnter' || event.keyCode === 13 || event.which === 13;
+    if (isEnter) {
       if (!event.shiftKey) {
         event.preventDefault();
+        event.stopPropagation();
         ask();
+        return false;
       }
       // Shift + Enter naturally falls through to insert a new line
     }

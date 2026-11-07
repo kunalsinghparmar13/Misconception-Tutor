@@ -42,6 +42,15 @@ register_security_middleware(app)
 backend_code.init_db()
 
 
+@app.after_request
+def add_no_cache_headers(response):
+    """Enforce fresh asset downloads for responsive UI changes."""
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
+
 # ==============================================================================
 # SECTION 1: STATIC & ASSET ROUTES (Serving the approved UI/UX)
 # ==============================================================================
@@ -49,13 +58,21 @@ backend_code.init_db()
 @app.get("/")
 def index():
     """Serves the approved responsive interface."""
-    return send_from_directory(UI_DIR, "code.html")
+    res = send_from_directory(UI_DIR, "code.html")
+    res.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    res.headers["Pragma"] = "no-cache"
+    res.headers["Expires"] = "0"
+    return res
 
 
 @app.get("/app.js")
 def app_script():
     """Serves the frontend application controller."""
-    return send_from_directory(UI_DIR, "app.js")
+    res = send_from_directory(UI_DIR, "app.js")
+    res.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    res.headers["Pragma"] = "no-cache"
+    res.headers["Expires"] = "0"
+    return res
 
 
 @app.get("/screen.png")
