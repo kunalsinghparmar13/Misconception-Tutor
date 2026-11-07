@@ -42,13 +42,10 @@ This application seamlessly integrates all three core pillars into a single, coh
    - Collision-free targeted problem generator enforcing the **3 Strict Mathematical Checks** (target bug $\neq$ correct, target bug $\neq$ other bugs, zero collision).
    - SQLite tracking database with Write-Ahead Logging (`WAL` mode) and incremental **Bayesian Knowledge Tracing (Corbett & Anderson 1995)**.
 
-2. **The Approved UI & UX (`UI and UX/`)**:
-   - Responsive interface styled with Tailwind CSS (loaded from the Play CDN - for a fully production build, compile it with the Tailwind CLI), Geist font, JetBrains Mono, and Google Material Symbols.
-   - Dynamic 4-view navigation:
-     - 🎯 **Diagnostic Practice**: Interactive math problems, instant M1–M5 cognitive replay, Socratic explanations, and one-click targeted follow-up drills.
-     - 💬 **Socratic AI Tutor**: Freeform math derivation and Python debugging with starter prompts (Quadratic factorization, Fibonacci recursion depth, Integration by parts, Nested loop IndexError).
-     - 🧠 **LLM Continuous Training Hub**: Live telemetry of captured instruction pairs, active checkpoints, training loss, and real-time fine-tuning execution.
-     - 📊 **Learner Mastery & Analytics**: BKT mastery probability gauges ($P(\text{Mastery})$) and teacher cohort heatmaps.
+2. **The Sikora AI interface (`UI and UX/`)**:
+   - `index.html`: the Sikora AI learning space (DM Sans / Manrope / DM Mono, interactive water background, subject cards for Mathematics and Python, starter prompts, and a bottom composer).
+   - `app.js`: connects the composer to the four-agent tutor (`/api/tutor/stream`) and renders each agent's result (explanation, correct answer, practice rounds, review) as it arrives; the header pill shows whether the model is online.
+   - `tutor.css`: styles for the tutor's result cards, built on the page's own colour tokens.
 
 3. **The LLM & Continuous Self-Improvement Pipeline (`LLM/`)**:
    - Loaded and managed by `backend/llm_engine.py` and `backend/trainer.py`.
@@ -223,10 +220,9 @@ Misconception-Tutor/
 │       └── lifecycle.py     # Student session memory & cognitive intent tracking
 ├── src/llm/                 # ECC Multi-Provider LLM Harness (Ollama, Claude, OpenAI)
 ├── UI and UX/
-│   ├── code.html            # Approved responsive UI with 4 integrated modes
-│   ├── app.js               # Frontend application bridge and state controller
-│   ├── DESIGN.md            # Design system tokens, typography, and palette
-│   └── screen.png           # Visual design preview
+│   ├── index.html           # Sikora AI interface
+│   ├── app.js               # Connects the composer to the four-agent tutor
+│   └── tutor.css            # Styles for the tutor's result cards
 ├── LLM/
 │   ├── adapter_config.json  # PEFT LoRA configuration
 │   ├── checkpoint-1083/     # Latest fine-tuned checkpoint (Loss: 0.1710)

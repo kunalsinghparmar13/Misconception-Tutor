@@ -81,7 +81,7 @@ flowchart TD
 sequenceDiagram
     autonumber
     actor Student as Student / Evaluator
-    participant UI as Web Interface (code.html)
+    participant UI as Web Interface (index.html)
     participant Sec as ECC Security Guard & Sanitizer
     participant API as Flask API Engine (api.py)
     participant Engine as Cognitive Engines (Math / Python / Solver)
@@ -119,7 +119,7 @@ sequenceDiagram
 
 | Module | File Path | Primary Function & Mathematical/Security Role |
 |---|---|---|
-| **Web Presentation** | [`UI and UX/code.html`](file:///Users/_needtochill_/.gemini/antigravity/scratch/Misconception-Tutor/UI%20and%20UX/code.html) | Responsive dashboard: Diagnostic Practice, Socratic AI Tutor, Training Hub, and BKT Masteries. |
+| **Web Presentation** | [`UI and UX/index.html`](UI%20and%20UX/index.html) | Sikora AI interface; `app.js` streams the four tutor agents and renders their results. |
 | **API Server** | [`backend/api.py`](file:///Users/_needtochill_/.gemini/antigravity/scratch/Misconception-Tutor/backend/api.py) | Dual-stack (`::` IPv6 and `127.0.0.1` IPv4) Flask server orchestrating all backend subsystems. |
 | **Cognitive Math** | [`backend/backend_code.py`](file:///Users/_needtochill_/.gemini/antigravity/scratch/Misconception-Tutor/backend/backend_code.py) | Implements Brown & Burton (1978) M1–M5 buggy rules, 3 strict collision-free checks, and BKT. |
 | **Python Debugger** | [`backend/python_debugger.py`](file:///Users/_needtochill_/.gemini/antigravity/scratch/Misconception-Tutor/backend/python_debugger.py) | AST compilation, line-by-line syntax error pointer (`^`), mutable default detector, safe runner. |

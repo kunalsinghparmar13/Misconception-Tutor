@@ -206,11 +206,16 @@ def test_continuous_trainer_status():
 def test_api_static_routes(client):
     r_index = client.get("/")
     assert r_index.status_code == 200
-    assert b"Where are you stuck today?" in r_index.data
+    assert b"Make sense of the tricky bits." in r_index.data
+    assert b'src="/app.js"' in r_index.data
 
     r_app = client.get("/app.js")
     assert r_app.status_code == 200
     assert b"/api/tutor/stream" in r_app.data
+
+    r_css = client.get("/tutor.css")
+    assert r_css.status_code == 200
+    assert b".t-card" in r_css.data
 
 
 def test_api_health_and_status(client):

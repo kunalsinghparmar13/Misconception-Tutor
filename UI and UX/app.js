@@ -1,24 +1,26 @@
-/* Misconception Tutor - frontend controller.
+/* Sikora AI (Misconception Tutor) - frontend controller for index.html.
  *
  * Talks to the Flask backend. A question runs through four agents (all powered by the
  * fine-tuned model) and each agent's result is rendered as soon as it arrives:
  *   1 Explain  ->  2 Solve  ->  3 Practice  ->  4 Review
  * Everything coming from the server is inserted with textContent / DOM nodes (never innerHTML).
+ * Styles for the result cards live in tutor.css.
  */
 (function () {
   'use strict';
 
   const MAX_CHARS = 4000;
-  const textarea = document.querySelector('textarea');
+  const textarea = document.getElementById('composer-input');
   const sendButton = document.querySelector('button[aria-label="Send"]');
-  const counter = document.getElementById('char-counter');
+  const hint = document.getElementById('compose-hint');
+  const modelPill = document.getElementById('model-pill');
   const modelStatus = document.getElementById('model-status');
-  if (!textarea || !sendButton) return;
+  const content = document.querySelector('main.content');
+  if (!textarea || !sendButton || !content) return;
 
-  let activeSubject = 'Python'; // matches the card that is highlighted on load
   let busy = false;
   let currentController = null;
-  const history = []; // { question, subject, result }
+  const history = []; // { question, subject }
 
   function learnerId() {
     try {
@@ -33,6 +35,16 @@
     }
   }
 
+  /** The subject card the learner picked in index.html ('math' or 'python'). */
+  function activeSubject() {
+    const card = document.querySelector('.subject.selected');
+    return card && card.dataset.subject === 'math' ? 'Mathematics' : 'Python';
+  }
+
+  function setHint(text) {
+    if (hint) hint.textContent = text;
+  }
+
   // ---------------------------------------------------------------- tiny DOM helpers
   function el(tag, className, text) {
     const node = document.createElement(tag);
@@ -44,13 +56,12 @@
   function inline(text) {
     // `code` and **bold** only; everything else stays literal text.
     const frag = document.createDocumentFragment();
-    const parts = String(text).split(/(`[^`\n]+`|\*\*[^*\n]+\*\*)/g);
-    parts.forEach((part) => {
+    String(text).split(/(`[^`\n]+`|\*\*[^*\n]+\*\*)/g).forEach((part) => {
       if (!part) return;
       if (part.startsWith('`') && part.endsWith('`') && part.length > 2) {
-        frag.appendChild(el('code', 'px-1 py-0.5 rounded bg-surface-container font-code-inline text-code-inline', part.slice(1, -1)));
+        frag.appendChild(el('code', 't-inline-code', part.slice(1, -1)));
       } else if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
-        frag.appendChild(el('strong', 'font-semibold', part.slice(2, -2)));
+        frag.appendChild(el('strong', '', part.slice(2, -2)));
       } else {
         frag.appendChild(document.createTextNode(part));
       }
@@ -59,13 +70,13 @@
   }
 
   function codeBlock(code) {
-    const pre = el('pre', 'whitespace-pre-wrap overflow-x-auto rounded-lg bg-surface-container-low p-3 font-code-block text-code-block text-on-surface my-2');
+    const pre = el('pre', 't-code');
     pre.appendChild(el('code', '', code));
     return pre;
   }
 
   function markdown(text) {
-    const root = el('div', 'space-y-2 font-body-md text-body-md text-on-surface');
+    const root = el('div', 't-md');
     const chunks = String(text || '').split(/```[^\n]*\n([\s\S]*?)(?:```|$)/g);
     chunks.forEach((chunk, index) => {
       if (index % 2 === 1) {
@@ -78,12 +89,12 @@
         const bullet = line.match(/^\s*(?:[-*]|\d+[.)])\s+(.*)$/);
         if (heading) {
           list = null;
-          const h = el('h4', 'font-headline-sm text-headline-sm text-on-surface mt-3');
+          const h = el('h4');
           h.appendChild(inline(heading[1]));
           root.appendChild(h);
         } else if (bullet) {
           if (!list) {
-            list = el('ul', 'list-disc pl-5 space-y-1');
+            list = el('ul');
             root.appendChild(list);
           }
           const li = el('li');
@@ -103,10 +114,12 @@
   }
 
   // ---------------------------------------------------------------- results container
-  const results = el('section', 'hidden w-full max-w-3xl mx-auto mb-6 space-y-4');
+  const results = el('section', 't-results');
   results.id = 'llm-response';
-  const mainWrap = document.querySelector('main > div');
-  if (mainWrap) mainWrap.prepend(results);
+  results.hidden = true;
+  const greeting = content.querySelector('.greeting');
+  if (greeting) greeting.after(results);
+  else content.prepend(results);
 
   const AGENTS = [
     { key: 'explainer', number: 1, title: 'Why it went wrong', hint: 'Explanation agent' },
@@ -116,63 +129,78 @@
   ];
   let panels = {};
 
-  function buildPanels() {
+  function buildPanels(question) {
     results.replaceChildren();
     panels = {};
-    const banner = el('div', 'hidden rounded-2xl p-4 bg-error-container text-on-error-container font-body-sm text-body-sm');
+    const head = el('div', 't-results-head');
+    head.appendChild(el('div', 'eyebrow', 'YOUR QUESTION'));
+    head.appendChild(el('p', 't-question', question));
+    const close = el('button', 't-link', 'Clear');
+    close.type = 'button';
+    close.addEventListener('click', resetResults);
+    head.appendChild(close);
+    results.appendChild(head);
+    const banner = el('div', 't-banner');
     banner.id = 'result-banner';
+    banner.hidden = true;
     results.appendChild(banner);
     AGENTS.forEach((agent) => {
-      const card = el('div', 'rounded-2xl bg-surface-container-lowest p-5 shadow-sm ring-1 ring-outline-variant/30');
-      const head = el('div', 'flex items-center justify-between mb-3');
-      const left = el('div', 'flex items-center gap-2');
-      left.appendChild(el('span', 'w-6 h-6 rounded-full bg-primary text-on-primary flex items-center justify-center font-label-sm text-label-sm', String(agent.number)));
-      left.appendChild(el('span', 'font-headline-sm text-headline-sm text-on-surface', agent.title));
-      const chip = el('span', 'font-label-sm text-label-sm px-2 py-0.5 rounded-full bg-surface-container text-on-surface-variant', 'Waiting');
-      head.appendChild(left);
-      head.appendChild(chip);
-      const body = el('div', 'text-on-surface-variant font-body-sm text-body-sm', agent.hint + ' will appear here.');
-      card.appendChild(head);
+      const card = el('div', 't-card');
+      const top = el('div', 't-card-head');
+      const left = el('div', 't-card-title');
+      left.appendChild(el('span', 't-num', String(agent.number)));
+      left.appendChild(el('span', '', agent.title));
+      const chip = el('span', 't-chip', 'Waiting');
+      top.appendChild(left);
+      top.appendChild(chip);
+      const body = el('div', 't-body t-muted', agent.hint + ' will appear here.');
+      card.appendChild(top);
       card.appendChild(body);
       results.appendChild(card);
       panels[agent.key] = { card, chip, body };
     });
-    results.classList.remove('hidden');
+    results.hidden = false;
+  }
+
+  function resetResults() {
+    if (currentController) currentController.abort();
+    results.hidden = true;
+    results.replaceChildren();
+    setHint('Choose a learning path or type your question');
   }
 
   function setChip(key, label, tone) {
     const chip = panels[key] && panels[key].chip;
     if (!chip) return;
     chip.textContent = label;
-    const tones = {
-      work: 'bg-secondary-fixed text-on-secondary-fixed animate-pulse',
-      done: 'bg-tertiary-fixed text-on-tertiary-fixed',
-      warn: 'bg-error-container text-on-error-container',
-      idle: 'bg-surface-container text-on-surface-variant',
-    };
-    chip.className = 'font-label-sm text-label-sm px-2 py-0.5 rounded-full ' + (tones[tone] || tones.idle);
+    chip.className = 't-chip' + (tone && tone !== 'idle' ? ' is-' + tone : '');
   }
 
   function showBanner(message, kind) {
     const banner = document.getElementById('result-banner');
     if (!banner) return;
-    banner.className = 'rounded-2xl p-4 font-body-sm text-body-sm ' +
-      (kind === 'info' ? 'bg-secondary-fixed text-on-secondary-fixed' : 'bg-error-container text-on-error-container');
+    banner.className = 't-banner' + (kind === 'info' ? ' is-info' : '');
     banner.textContent = message;
+    banner.hidden = false;
+  }
+
+  function freshBody(key) {
+    const body = panels[key].body;
+    body.replaceChildren();
+    body.className = 't-body';
+    return body;
   }
 
   // ---------------------------------------------------------------- agent renderers
   function labelled(label, text) {
-    const wrap = el('div', 'mb-3');
-    wrap.appendChild(el('div', 'font-label-sm text-label-sm uppercase tracking-wider text-outline mb-1', label));
+    const wrap = el('div', 't-section');
+    wrap.appendChild(el('div', 't-label', label));
     wrap.appendChild(markdown(text));
     return wrap;
   }
 
   function renderExplanation(data) {
-    const body = panels.explainer.body;
-    body.replaceChildren();
-    body.className = '';
+    const body = freshBody('explainer');
     const s = data.sections || {};
     const order = [
       ['misconception', 'The idea that tripped you up'],
@@ -182,35 +210,30 @@
       ['check_yourself', 'Check yourself'],
     ];
     const present = order.filter(([key]) => s[key]);
-    if (present.length < 2) {
-      body.appendChild(markdown(data.text));
-    } else {
-      present.forEach(([key, label]) => body.appendChild(labelled(label, s[key])));
-    }
+    if (present.length < 2) body.appendChild(markdown(data.text));
+    else present.forEach(([key, label]) => body.appendChild(labelled(label, s[key])));
     setChip('explainer', 'Done', 'done');
   }
 
   function renderSolution(data) {
-    const body = panels.solver.body;
-    body.replaceChildren();
-    body.className = '';
+    const body = freshBody('solver');
     if (data.kind === 'code') {
       if (data.code) body.appendChild(codeBlock(data.code));
       if (data.what_changed) body.appendChild(labelled('What changed', data.what_changed));
       if (data.run) {
         const ok = data.run.success;
-        const out = el('div', 'rounded-lg p-3 font-body-sm text-body-sm ' + (ok ? 'bg-tertiary-fixed/40' : 'bg-error-container'));
-        out.appendChild(el('div', 'font-label-sm text-label-sm uppercase tracking-wider mb-1', ok ? 'Output when this code was actually run' : 'Running this code failed'));
-        out.appendChild(el('pre', 'whitespace-pre-wrap font-code-block text-code-block',
+        const out = el('div', 't-run' + (ok ? '' : ' is-bad'));
+        out.appendChild(el('div', 't-label', ok ? 'Output when this code was actually run' : 'Running this code failed'));
+        out.appendChild(el('pre', 't-run-out',
           ok ? ((data.run.stdout || '').trim() || '(no output)') : `${data.run.error_type}: ${data.run.error_message}`));
         body.appendChild(out);
       }
       if (!data.code) body.appendChild(markdown(data.text));
     } else {
       if (data.final_answer) {
-        const box = el('div', 'rounded-xl bg-primary text-on-primary px-4 py-3 mb-3');
-        box.appendChild(el('div', 'font-label-sm text-label-sm uppercase tracking-wider opacity-70', 'Final answer'));
-        box.appendChild(el('div', 'font-headline-md text-headline-md', data.final_answer));
+        const box = el('div', 't-final');
+        box.appendChild(el('div', 't-label', 'Final answer'));
+        box.appendChild(el('div', 't-final-value', data.final_answer));
         body.appendChild(box);
       }
       body.appendChild(markdown(data.steps || data.text));
@@ -219,44 +242,37 @@
   }
 
   function renderReview(review) {
-    const body = panels.reviewer.body;
-    body.replaceChildren();
-    body.className = '';
+    const body = freshBody('reviewer');
     const verdict = review.approved
       ? (review.verified ? 'Checked - the answer and the code match exact computation.' : 'Approved, but some parts could not be machine-verified.')
       : 'Not fully verified - treat the answer with caution.';
-    body.appendChild(el('p', 'font-body-md text-body-md text-on-surface mb-3 font-medium', verdict));
+    body.appendChild(el('p', 't-verdict', verdict));
     const icons = { pass: '✓', fail: '✕', warn: '!', skip: '–' };
-    const colors = { pass: 'text-on-tertiary-container', fail: 'text-error', warn: 'text-error', skip: 'text-outline' };
-    const list = el('ul', 'space-y-1.5');
+    const list = el('ul', 't-checks');
     (review.checks || []).forEach((check) => {
-      const li = el('li', 'flex gap-2 font-body-sm text-body-sm text-on-surface-variant');
-      li.appendChild(el('span', 'font-semibold w-4 shrink-0 ' + (colors[check.status] || ''), icons[check.status] || '•'));
+      const li = el('li');
+      li.appendChild(el('span', 't-check-icon is-' + (check.status || 'skip'), icons[check.status] || '•'));
       li.appendChild(el('span', '', check.detail));
       list.appendChild(li);
     });
     body.appendChild(list);
     if (review.model_notes) body.appendChild(labelled('Reviewer model notes', review.model_notes));
-    if (review.revisions) {
-      body.appendChild(el('p', 'font-body-sm text-body-sm text-outline mt-2', `${review.revisions} automatic revision(s) were needed.`));
-    }
+    if (review.revisions) body.appendChild(el('p', 't-muted', `${review.revisions} automatic revision(s) were needed.`));
     setChip('reviewer', review.approved ? 'Done' : 'Needs care', review.approved ? 'done' : 'warn');
   }
 
   // ---- practice ------------------------------------------------------------------------
   function renderPractice(set) {
-    const body = panels.practice.body;
-    body.replaceChildren();
-    body.className = '';
+    const body = freshBody('practice');
     const questions = (set && set.questions) || [];
     if (!questions.length) {
-      body.appendChild(el('p', 'font-body-sm text-body-sm text-on-surface-variant', 'The model did not produce usable practice problems this time. Ask again to retry.'));
+      body.appendChild(el('p', 't-muted', 'The model did not produce usable practice problems this time. Ask again to retry.'));
       setChip('practice', 'None', 'warn');
       return;
     }
-    body.appendChild(el('p', 'font-body-sm text-body-sm text-on-surface-variant mb-3',
+    body.appendChild(el('p', 't-muted',
       `Problems built from your question and your mistake (${set.misconception}). Get ${Math.round((set.mastery_threshold || 0.8) * 100)}% of a round right to finish; otherwise you get a new round of different problems.`));
-    const rounds = el('div', 'space-y-6');
+    const rounds = el('div', 't-rounds');
     body.appendChild(rounds);
     renderRound(set, rounds);
     setChip('practice', 'Done', 'done');
@@ -265,35 +281,35 @@
   const LEVEL_LABEL = { start: 'Starting level', easier: 'Easier', same: 'Same level, new problems', harder: 'Harder' };
 
   function renderRound(set, rounds) {
-    const section = el('div', 'space-y-3');
-    const head = el('div', 'flex items-center justify-between');
-    head.appendChild(el('span', 'font-label-md text-label-md text-on-surface', `Round ${set.round || 1} - ${LEVEL_LABEL[set.level] || 'Practice'}`));
-    const score = el('span', 'font-label-sm text-label-sm text-outline', `0 / ${set.questions.length} answered`);
+    const section = el('div', 't-round');
+    const head = el('div', 't-round-head');
+    head.appendChild(el('span', '', `Round ${set.round || 1} · ${LEVEL_LABEL[set.level] || 'Practice'}`));
+    const score = el('span', 't-muted', `0 / ${set.questions.length} answered`);
     head.appendChild(score);
     section.appendChild(head);
     if (set.previous) {
-      section.appendChild(el('p', 'font-body-sm text-body-sm text-on-surface-variant',
+      section.appendChild(el('p', 't-muted',
         `Last round: ${set.previous.correct}/${set.previous.total} correct (${Math.round(set.previous.accuracy * 100)}%). These are new problems for the same mistake.`));
     }
-    const list = el('div', 'space-y-3');
-    set.questions.forEach((q, index) => list.appendChild(practiceCard(q, index, (info) => onGraded(info, set, section, score, rounds))));
+    const list = el('div', 't-practice-list');
+    set.questions.forEach((q, index) => list.appendChild(practiceCard(q, index, (info) => onGraded(info, section, score, rounds))));
     section.appendChild(list);
     rounds.appendChild(section);
   }
 
-  function onGraded(info, set, section, score, rounds) {
+  function onGraded(info, section, score, rounds) {
     if (!info) return;
     score.textContent = `${info.correct} correct, ${info.answered} / ${info.total} answered`;
     if (!info.complete || section.dataset.done) return;
     section.dataset.done = '1';
     const pct = Math.round(info.accuracy * 100);
     if (info.mastered) {
-      section.appendChild(el('div', 'rounded-xl bg-tertiary-container p-4 font-body-md text-body-md text-on-tertiary-container',
+      section.appendChild(el('div', 't-note is-good',
         `Mastered: ${info.correct}/${info.total} correct (${pct}%). You have fixed this misconception - no more practice needed.`));
       setChip('practice', 'Mastered', 'done');
       return;
     }
-    const note = el('div', 'rounded-xl bg-surface-container p-4 font-body-md text-body-md text-on-surface',
+    const note = el('div', 't-note',
       `${info.correct}/${info.total} correct (${pct}%), below ${Math.round(info.threshold * 100)}%. Making new problems (${(LEVEL_LABEL[info.next_level] || info.next_level).toLowerCase()})...`);
     section.appendChild(note);
     setChip('practice', 'New round...', 'work');
@@ -315,9 +331,13 @@
       setChip('practice', `Round ${payload.round}`, 'done');
     } catch (error) {
       note.textContent = `Could not make a new round: ${error.message}. `;
-      const retry = el('button', 'ml-2 rounded-full bg-primary px-3 py-1 font-label-md text-label-md text-on-primary', 'Try again');
+      const retry = el('button', 't-btn', 'Try again');
       retry.type = 'button';
-      retry.addEventListener('click', () => { retry.remove(); note.textContent = 'Making new problems...'; nextRound(setId, note, rounds); });
+      retry.addEventListener('click', () => {
+        retry.remove();
+        note.textContent = 'Making new problems...';
+        nextRound(setId, note, rounds);
+      });
       note.appendChild(retry);
       setChip('practice', 'Retry', 'warn');
     }
@@ -325,25 +345,30 @@
 
   function practiceCard(q, index, onRound) {
     const isCode = q.type === 'code';
-    const card = el('div', 'rounded-xl bg-surface-container-low p-4');
-    const top = el('div', 'flex items-center justify-between mb-2');
-    top.appendChild(el('span', 'font-label-sm text-label-sm uppercase tracking-wider text-outline', `Practice ${index + 1}`));
-    top.appendChild(el('span', 'font-label-sm text-label-sm ' + (q.verified ? 'text-on-tertiary-container' : 'text-outline'),
+    const card = el('div', 't-practice');
+    const top = el('div', 't-practice-head');
+    top.appendChild(el('span', 't-label', `Practice ${index + 1}`));
+    top.appendChild(el('span', q.verified ? 't-verified' : 't-muted',
       q.verified ? '✓ answer machine-verified' : 'answer not machine-verified'));
     card.appendChild(top);
-    card.appendChild(el('p', 'font-body-md text-body-md text-on-surface mb-2', q.prompt));
+    card.appendChild(el('p', 't-prompt', q.prompt));
     if (isCode && q.code) card.appendChild(codeBlock(q.code));
 
-    const input = el(isCode ? 'textarea' : 'input', 'w-full rounded-lg bg-surface-container-lowest px-3 py-2 font-code-block text-code-block text-on-surface ring-1 ring-outline-variant/50 focus:ring-2 focus:ring-primary');
+    const input = el(isCode ? 'textarea' : 'input', 't-input');
     input.placeholder = isCode ? 'Paste your corrected Python code here...' : 'Type your answer, for example 5/12';
     input.setAttribute('aria-label', `Answer for practice ${index + 1}`);
-    if (isCode) { input.rows = 4; input.spellcheck = false; } else { input.type = 'text'; }
+    if (isCode) {
+      input.rows = 4;
+      input.spellcheck = false;
+    } else {
+      input.type = 'text';
+    }
     card.appendChild(input);
 
-    const row = el('div', 'mt-3 flex items-center gap-3');
-    const submit = el('button', 'rounded-full bg-primary px-4 py-2 font-label-md text-label-md text-on-primary', 'Check answer');
+    const row = el('div', 't-practice-row');
+    const submit = el('button', 't-btn', 'Check answer');
     submit.type = 'button';
-    const verdict = el('span', 'font-body-sm text-body-sm text-on-surface-variant');
+    const verdict = el('span', 't-muted');
     row.appendChild(submit);
     row.appendChild(verdict);
     card.appendChild(row);
@@ -371,25 +396,25 @@
         const payload = await res.json();
         if (!res.ok) throw new Error(payload.error || 'Unable to grade this answer');
         verdict.textContent = payload.correct ? 'Correct - this misconception is getting weaker.' : 'Not yet - compare with the solution below.';
-        verdict.className = 'font-body-sm text-body-sm ' + (payload.correct ? 'text-on-tertiary-container' : 'text-error');
-        const box = el('div', 'mt-3 rounded-lg bg-surface-container-lowest p-3 text-on-surface');
+        verdict.className = payload.correct ? 't-good' : 't-bad';
+        const box = el('div', 't-solution');
         box.setAttribute('data-solution', '1');
-        box.appendChild(el('p', 'font-label-md text-label-md mb-2', isCode ? 'Correct code' : 'Correct answer'));
+        box.appendChild(el('div', 't-label', isCode ? 'Correct code' : 'Correct answer'));
         if (isCode) {
           box.appendChild(codeBlock(payload.correct_code || q.correct_code || 'No reference solution available.'));
-          if (payload.error) box.appendChild(el('p', 'font-body-sm text-body-sm text-error', `Your code failed: ${payload.error}`));
+          if (payload.error) box.appendChild(el('p', 't-bad', `Your code failed: ${payload.error}`));
           else if (payload.your_output !== undefined && !payload.correct) {
-            box.appendChild(el('p', 'font-body-sm text-body-sm', `Your output: ${payload.your_output || '(nothing)'}  |  expected: ${payload.expected_output || '(nothing)'}`));
+            box.appendChild(el('p', 't-muted', `Your output: ${payload.your_output || '(nothing)'}  |  expected: ${payload.expected_output || '(nothing)'}`));
           }
         } else {
-          box.appendChild(el('p', 'font-body-md text-body-md mb-1', payload.correct_answer || q.correct_answer || ''));
+          box.appendChild(el('p', 't-final-inline', payload.correct_answer || q.correct_answer || ''));
         }
-        if (payload.explanation) box.appendChild(el('p', 'font-body-sm text-body-sm text-on-surface-variant', payload.explanation));
+        if (payload.explanation) box.appendChild(el('p', 't-muted', payload.explanation));
         card.appendChild(box);
         if (onRound && payload.round) onRound(payload.round);
       } catch (error) {
         verdict.textContent = `Could not grade: ${error.message}`;
-        verdict.className = 'font-body-sm text-body-sm text-error';
+        verdict.className = 't-bad';
       } finally {
         submit.disabled = false;
       }
@@ -427,10 +452,10 @@
 
   function addFeedback(result) {
     if (!result || !result.sample_id) return;
-    const wrap = el('div', 'flex items-center justify-end gap-2 font-body-sm text-body-sm text-on-surface-variant');
+    const wrap = el('div', 't-feedback');
     wrap.appendChild(document.createTextNode('Was this helpful?'));
     ['helpful', 'unhelpful'].forEach((value) => {
-      const b = el('button', 'rounded-full px-3 py-1 bg-surface-container hover:bg-surface-container-high', value === 'helpful' ? '👍' : '👎');
+      const b = el('button', 't-btn is-ghost', value === 'helpful' ? '👍' : '👎');
       b.type = 'button';
       b.setAttribute('aria-label', value === 'helpful' ? 'Helpful' : 'Not helpful');
       b.addEventListener('click', async () => {
@@ -471,26 +496,40 @@
     if (buffer.trim()) handleEvent(JSON.parse(buffer.trim()), state);
   }
 
+  function stopPanels() {
+    AGENTS.forEach((a) => {
+      const chip = panels[a.key] && panels[a.key].chip;
+      if (chip && (chip.textContent === 'Working...' || chip.textContent === 'Waiting')) {
+        setChip(a.key, 'Stopped', 'warn');
+        panels[a.key].body.textContent = 'Not generated because the tutor stopped.';
+      }
+    });
+  }
+
   async function ask() {
-    const question = textarea.value.trim();
+    const question = textarea.value.trim().slice(0, MAX_CHARS);
     if (!question) { textarea.focus(); return; }
     if (busy) return;
+    const subject = activeSubject();
     setBusy(true);
-    buildPanels();
+    buildPanels(question);
     results.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setHint('Your tutor is working through it…');
     currentController = new AbortController();
     const state = { result: null, error: null };
     try {
       const response = await fetch('/api/tutor/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question, subject: activeSubject, mode: 'diagnostic', learner_id: learnerId() }),
+        body: JSON.stringify({ question, subject, mode: 'diagnostic', learner_id: learnerId() }),
         signal: currentController.signal,
       });
       if (!response.ok) {
         let payload = {};
         try { payload = await response.json(); } catch (e) { /* not JSON */ }
-        throw new Error(payload.error || payload.answer || `The server answered with an error (${response.status}).`);
+        const err = new Error(payload.error || payload.answer || `The server answered with an error (${response.status}).`);
+        err.fromServer = response.status < 500; // e.g. an empty or refused question: show the message as is
+        throw err;
       }
       await readStream(response, state);
       if (state.error) {
@@ -498,13 +537,19 @@
         showBanner(offline
           ? `Your tutor model is offline, so nothing was generated. ${state.error.message || ''}`
           : (state.error.message || 'Something went wrong.'));
-        AGENTS.forEach((a) => { const chip = panels[a.key].chip; if (chip.textContent === 'Working...' || chip.textContent === 'Waiting') setChip(a.key, 'Stopped', 'warn'); });
+        stopPanels();
+        setHint('The tutor stopped · Try again in a minute');
       } else if (state.result) {
-        history.unshift({ question, subject: activeSubject });
+        history.unshift({ question, subject });
         renderHistory();
+        setHint('Done · Ask a follow-up or try the practice problems');
       }
     } catch (error) {
-      if (error.name !== 'AbortError') showBanner(`Service unavailable: ${error.message}`);
+      if (error.name !== 'AbortError') {
+        showBanner(error.fromServer ? error.message : `Service unavailable: ${error.message}`);
+        stopPanels();
+        setHint(error.fromServer ? 'Edit your question and send it again' : 'Could not reach the tutor');
+      }
     } finally {
       setBusy(false);
       refreshBackendStatus();
@@ -514,26 +559,24 @@
   function setBusy(value) {
     busy = value;
     sendButton.disabled = value;
-    sendButton.classList.toggle('opacity-50', value);
-    const icon = sendButton.querySelector('.material-symbols-outlined');
-    if (icon) icon.textContent = value ? 'hourglass_top' : 'arrow_upward';
+    sendButton.classList.toggle('is-busy', value);
   }
 
   // ---------------------------------------------------------------- sidebar + status
   function renderHistory() {
-    const box = document.getElementById('history-list');
-    if (!box) return;
+    const box = document.querySelector('.recent');
+    if (!box || !history.length) return; // keeps the design's sample sessions until there is real history
     box.replaceChildren();
-    if (!history.length) {
-      box.appendChild(el('p', 'px-space-sm py-1.5 font-body-sm text-body-sm text-outline', 'Your questions from this visit will appear here.'));
-      return;
-    }
-    history.slice(0, 12).forEach((item) => {
-      const a = el('button', 'block w-full text-left px-space-sm py-1.5 rounded text-on-surface-variant hover:text-on-surface hover:bg-surface-container-low transition-colors truncate font-body-sm text-body-sm', item.question.split('\n')[0]);
-      a.type = 'button';
-      a.title = item.question;
-      a.addEventListener('click', () => { textarea.value = item.question; updateCounter(); textarea.focus(); });
-      box.appendChild(a);
+    history.slice(0, 8).forEach((item) => {
+      const b = el('button', '', item.question.split('\n')[0]);
+      b.type = 'button';
+      b.title = item.question;
+      b.addEventListener('click', () => {
+        textarea.value = item.question;
+        textarea.dispatchEvent(new Event('input'));
+        textarea.focus();
+      });
+      box.appendChild(b);
     });
   }
 
@@ -543,54 +586,23 @@
       const res = await fetch('/api/backend-status', { cache: 'no-store' });
       const s = await res.json();
       const agents = s.agents || {};
-      if (s.llmLoaded) {
-        modelStatus.textContent = `Model online: ${String(s.model || 'fine-tuned Gemma').split(' - ')[0]}`;
-        modelStatus.className = 'font-label-sm text-label-sm text-on-tertiary-container';
-      } else {
-        modelStatus.textContent = 'Model offline - answers are paused';
-        modelStatus.className = 'font-label-sm text-label-sm text-error';
-        modelStatus.title = agents.error || s.llmError || '';
+      const online = Boolean(s.llmLoaded);
+      modelStatus.textContent = online ? 'Sikora ready' : 'Tutor offline';
+      if (modelPill) {
+        modelPill.classList.toggle('is-offline', !online);
+        modelPill.title = online ? String(s.model || 'fine-tuned model').split(' - ')[0] : (agents.error || s.llmError || '');
       }
     } catch (e) {
       modelStatus.textContent = 'Server unreachable';
-      modelStatus.className = 'font-label-sm text-label-sm text-error';
+      if (modelPill) modelPill.classList.add('is-offline');
     }
-  }
-
-  function updateCounter() {
-    if (counter) counter.textContent = `${textarea.value.length} / ${MAX_CHARS}`;
   }
 
   // ---------------------------------------------------------------- wiring
+  // index.html's Send button and Enter key call the global sendPrompt(); route them to the tutor.
+  window.sendPrompt = ask;
   textarea.maxLength = MAX_CHARS;
-  textarea.addEventListener('input', updateCounter);
-  textarea.addEventListener('keydown', (event) => {
-    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
-      event.preventDefault();
-      ask();
-    }
-  });
-  sendButton.addEventListener('click', ask);
 
-  [['tab-math', 'Mathematics'], ['tab-python', 'Python']].forEach(([id, subject]) => {
-    const card = document.getElementById(id);
-    if (card) card.addEventListener('click', () => { activeSubject = subject; });
-  });
-
-  const newChat = Array.from(document.querySelectorAll('aside button')).find((b) => /new chat/i.test(b.textContent));
-  if (newChat) {
-    newChat.addEventListener('click', () => {
-      if (currentController) currentController.abort();
-      textarea.value = '';
-      updateCounter();
-      results.classList.add('hidden');
-      results.replaceChildren();
-      textarea.focus();
-    });
-  }
-
-  updateCounter();
-  renderHistory();
   refreshBackendStatus();
   setInterval(refreshBackendStatus, 30000);
 })();

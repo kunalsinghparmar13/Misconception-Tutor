@@ -48,8 +48,8 @@ backend_code.init_db()
 
 @app.get("/")
 def index():
-    """Serves the approved responsive interface."""
-    return send_from_directory(UI_DIR, "code.html")
+    """Serves the Sikora AI interface."""
+    return send_from_directory(UI_DIR, "index.html")
 
 
 @app.get("/app.js")
@@ -58,10 +58,10 @@ def app_script():
     return send_from_directory(UI_DIR, "app.js")
 
 
-@app.get("/screen.png")
-def screen_image():
-    """Serves the visual UI preview snapshot."""
-    return send_from_directory(UI_DIR, "screen.png")
+@app.get("/tutor.css")
+def tutor_styles():
+    """Serves the styles for the tutor's result cards."""
+    return send_from_directory(UI_DIR, "tutor.css")
 
 
 # ==============================================================================
