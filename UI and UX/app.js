@@ -565,9 +565,13 @@
   textarea.maxLength = MAX_CHARS;
   textarea.addEventListener('input', updateCounter);
   textarea.addEventListener('keydown', (event) => {
-    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
-      event.preventDefault();
-      ask();
+    if (event.isComposing) return;
+    if (event.key === 'Enter') {
+      if (!event.shiftKey) {
+        event.preventDefault();
+        ask();
+      }
+      // Shift + Enter naturally falls through to insert a new line
     }
   });
   sendButton.addEventListener('click', ask);
