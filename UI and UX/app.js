@@ -69,9 +69,68 @@
     return frag;
   }
 
+  // ---------------------------------------------------------------- code colours
+  // Colours code the way VS Code's default dark theme does (classes are coloured in tutor.css).
+  const PY_CONTROL = new Set(['if', 'elif', 'else', 'for', 'while', 'in', 'return', 'break', 'continue', 'pass',
+    'try', 'except', 'finally', 'with', 'as', 'raise', 'yield', 'await', 'async', 'import', 'from', 'del',
+    'assert', 'global', 'nonlocal']);
+  const PY_KEYWORD = new Set(['def', 'class', 'lambda', 'and', 'or', 'not', 'is', 'None', 'True', 'False', 'self', 'cls']);
+  const PY_BUILTIN_TYPES = new Set(['int', 'float', 'str', 'list', 'dict', 'set', 'tuple', 'bool', 'bytes', 'object',
+    'Exception', 'ValueError', 'TypeError', 'IndexError', 'KeyError', 'ZeroDivisionError', 'RecursionError']);
+  const PY_TOKEN = new RegExp([
+    '(#[^\\n]*)',                                                       // 1 comment
+    '((?:[rRbBuUfF]{1,2})?(?:"""[\\s\\S]*?(?:"""|$)|\'\'\'[\\s\\S]*?(?:\'\'\'|$)|"(?:\\\\.|[^"\\\\\\n])*"?|\'(?:\\\\.|[^\'\\\\\\n])*\'?))', // 2 string
+    '(\\b(?:0[xXoObB][\\da-fA-F_]+|\\d[\\d_]*\\.?\\d*(?:[eE][+-]?\\d+)?|\\.\\d+)[jJ]?\\b)', // 3 number
+    '([A-Za-z_]\\w*)',                                                  // 4 name
+    '([()[\\]{}])',                                                     // 5 bracket
+    '([+\\-*/%=<>!&|^~@:.,;]+)',                                        // 6 operator / punctuation
+  ].join('|'), 'g');
+
+  function colourPython(code) {
+    const frag = document.createDocumentFragment();
+    let last = 0;
+    let depth = 0;
+    let prevName = '';
+    const push = (text, cls) => {
+      if (!text) return;
+      frag.appendChild(cls ? el('span', cls, text) : document.createTextNode(text));
+    };
+    for (const m of code.matchAll(PY_TOKEN)) {
+      push(code.slice(last, m.index));
+      last = m.index + m[0].length;
+      const [tok, comment, string, number, name, bracket] = m;
+      if (comment) push(comment, 'c-comment');
+      else if (string) push(string, 'c-string');
+      else if (number) push(number, 'c-number');
+      else if (name) {
+        const next = code.slice(last).match(/^\s*(\(?)/);
+        let cls = 'c-var';
+        if (PY_CONTROL.has(name)) cls = 'c-control';
+        else if (PY_KEYWORD.has(name)) cls = 'c-keyword';
+        else if (prevName === 'class' || PY_BUILTIN_TYPES.has(name)) cls = 'c-type';
+        else if (prevName === 'def' || (next && next[1] === '(')) cls = 'c-func';
+        push(name, cls);
+        prevName = name;
+        continue;
+      } else if (bracket) {
+        const opening = '([{'.includes(bracket);
+        if (!opening) depth = Math.max(0, depth - 1);
+        push(bracket, 'c-bracket' + (depth % 3));
+        if (opening) depth += 1;
+      } else {
+        push(tok, 'c-op');
+      }
+      prevName = '';
+    }
+    push(code.slice(last));
+    return frag;
+  }
+
   function codeBlock(code) {
     const pre = el('pre', 't-code');
-    pre.appendChild(el('code', '', code));
+    const inner = el('code');
+    inner.appendChild(colourPython(String(code)));
+    pre.appendChild(inner);
     return pre;
   }
 

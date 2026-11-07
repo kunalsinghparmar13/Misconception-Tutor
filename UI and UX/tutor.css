@@ -120,12 +120,26 @@
   margin: 8px 0;
   padding: 12px 14px;
   border-radius: 12px;
-  background: #1f2b26;
-  color: #e9f0dc;
+  background: #1e1e1e;
+  color: #d4d4d4;
   font: 13px/1.55 'DM Mono', monospace;
   white-space: pre-wrap;
   overflow-x: auto;
 }
+
+/* Code colours from VS Code's default "Dark+" theme */
+.t-code .c-comment { color: #6a9955; font-style: italic; }
+.t-code .c-string { color: #ce9178; }
+.t-code .c-number { color: #b5cea8; }
+.t-code .c-control { color: #c586c0; } /* if, for, in, return, import ... */
+.t-code .c-keyword { color: #569cd6; } /* def, class, and, or, None, True ... */
+.t-code .c-type { color: #4ec9b0; }    /* int, str, list, class names */
+.t-code .c-func { color: #dcdcaa; }    /* print, len, function names */
+.t-code .c-var { color: #9cdcfe; }     /* variables */
+.t-code .c-op { color: #d4d4d4; }
+.t-code .c-bracket0 { color: #ffd700; } /* bracket pair colours */
+.t-code .c-bracket1 { color: #da70d6; }
+.t-code .c-bracket2 { color: #179fff; }
 
 .t-final {
   background: var(--deep);
