@@ -32,6 +32,7 @@ PROTECTED_PREFIXES = (
     "/api/practice/",
     "/api/python/debug",
     "/api/diagnose",
+    "/api/model/wake",  # starting the GPU costs money, so only for signed-in learners
 )
 
 _CACHE_SECONDS = 60

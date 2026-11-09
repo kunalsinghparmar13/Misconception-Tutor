@@ -1,4 +1,4 @@
-"""Orchestrates the four agents and streams progress events."""
+"""Runs the four agents (as a LangGraph graph, see graph.py) and streams progress events."""
 
 from __future__ import annotations
 
@@ -19,9 +19,9 @@ from .agents import (
     PracticeItem,
     ReviewerAgent,
     SolverAgent,
-    build_review,
 )
 from .model_client import ModelClient, ModelUnavailable
+from .graph import build_tutor_graph
 
 AGENT_ORDER = ["explainer", "solver", "practice", "reviewer"]
 MIN_PRACTICE = 3
@@ -115,6 +115,7 @@ class TutorPipeline:
         self.solver = SolverAgent(self.client)
         self.practice = PracticeAgent(self.client)
         self.reviewer = ReviewerAgent(self.client)
+        self.graph = build_tutor_graph(self)
 
     # ------------------------------------------------------------------ status
     def status(self) -> Dict[str, Any]:
@@ -125,6 +126,7 @@ class TutorPipeline:
             "mode": self.client.mode,
             "model": health.get("model") or self.client.model_name,
             "error": health.get("error"),
+            "state": health.get("state"),
             "agents": AGENT_ORDER,
         }
 
@@ -151,8 +153,6 @@ class TutorPipeline:
         if review_with_model is None:
             review_with_model = not self.fast  # the model critique is advisory; the exact checks always run
         count = max(3, min(8, int(practice_count or self.practice_count)))
-        timings: Dict[str, float] = {}
-        revisions = 0
 
         yield _ev("start", agents=AGENT_ORDER)
         cache_key = (question.strip().lower(), subject.strip().lower(), count, bool(review_with_model))
@@ -172,94 +172,27 @@ class TutorPipeline:
                 yield _ev("agent_result", agent=agent, data=replayed[key])
             yield _ev("complete", result={**replayed, "cached": True, "timings": {"total": 0.0}})
             return
-        grounding = gr.ground(question, subject)
-        yield _ev("grounding", data=grounding.to_dict())
-
-        # ---- Agent 1: explanation ------------------------------------------------
-        yield _ev("agent_start", agent="explainer")
-        try:
-            t = time.time()
-            explanation = self.explainer.run(question, grounding)
-            timings["explainer"] = round(time.time() - t, 2)
-        except ModelUnavailable as exc:
-            yield _ev("error", agent="explainer", status="model_unavailable", message=exc.public_message)
-            return
-        yield _ev("agent_result", agent="explainer", data=explanation.to_dict())
-
-        # ---- Agent 2: correct answer / code (with one verified retry) -------------
-        yield _ev("agent_start", agent="solver")
-        try:
-            t = time.time()
-            solution = self.solver.run(question, grounding)
-            solution_checks = self.reviewer.check_solution(grounding, solution)
-            if any(c.status == "fail" for c in solution_checks) and revisions < self.max_revisions:
-                revisions += 1
-                issues = [c.detail for c in solution_checks if c.status == "fail"]
-                yield _ev("revision", agent="solver", issues=issues)
-                solution = self.solver.run(question, grounding, feedback=issues)
-                solution_checks = self.reviewer.check_solution(grounding, solution)
-            timings["solver"] = round(time.time() - t, 2)
-        except ModelUnavailable as exc:
-            yield _ev("error", agent="solver", status="model_unavailable", message=exc.public_message)
-            return
-        yield _ev("agent_result", agent="solver", data=solution.to_dict())
-
-        # ---- Agent 3: practice problems -------------------------------------------
-        label = explanation.misconception or grounding.misconception_id or ""
-        yield _ev("agent_start", agent="practice")
-        items: List[PracticeItem] = []
-        practice_checks: List[Check] = []
-        t = time.time()
-        prefix = f"pr_{uuid.uuid4().hex[:8]}"
-        try:
-            items = self._round_items(question, grounding, label, count, prefix)
-            practice_checks = [self._practice_summary(items)]
-        except ModelUnavailable as exc:
-            practice_checks = [Check("practice_items_verified", "warn", f"Practice agent failed: {exc}")]
-        timings["practice"] = round(time.time() - t, 2)
-        practice_set = self._practice_set(grounding, label, items)
-        self._open_round(practice_set, prefix, question, subject, label, round_no=1, level="start", history=[])
-        yield _ev("agent_result", agent="practice", data=practice_set)
-
-        # ---- Agent 4: review --------------------------------------------------------
-        yield _ev("agent_start", agent="reviewer")
-        t = time.time()
-        checks: List[Check] = list(solution_checks) + self.reviewer.check_explanation(grounding, explanation) + practice_checks
-        verdict, notes = None, ""
-        if review_with_model:
-            try:
-                crit = self.reviewer.critique(question, explanation, solution, checks)
-                verdict, notes = crit["verdict"], crit["notes"]
-                if verdict:
-                    checks.append(Check("model_review", "warn" if verdict == "FAIL" else "pass",
-                                        notes or ("Reviewer model found no problems." if verdict == "PASS" else "Reviewer model flagged a concern.")))
-            except ModelUnavailable as exc:
-                checks.append(Check("model_review", "skip", f"Reviewer model unavailable: {exc}"))
-        review = build_review(checks, verdict, notes, revisions, round(time.time() - t, 2))
-        timings["reviewer"] = review.seconds
-        yield _ev("agent_result", agent="reviewer", data=review.to_dict())
-
-        result = {
-            "status": "success",
+        # ---- the four agents, run as a LangGraph graph (graph.py) -----------------
+        state = {
             "question": question,
             "subject": subject,
-            "grounding": grounding.to_dict(),
-            "explanation": explanation.to_dict(),
-            "solution": solution.to_dict(),
-            "practice_set": practice_set,
-            "review": review.to_dict(),
-            "misconception": label or grounding.misconception_id or "general",
-            "model": explanation.model,
-            "timings": {**timings, "total": round(time.time() - started, 2)},
+            "count": count,
+            "review_with_model": bool(review_with_model),
+            "started": started,
+            "cache_key": cache_key,
         }
-        result["answer"] = compose_markdown(result)
-        if self._cache_on and review.approved:
-            self._cache[cache_key] = result
-            while len(self._cache) > 200:
-                self._cache.popitem(last=False)
-        yield _ev("complete", result=result)
+        for event in self.graph.stream(state, stream_mode="custom"):
+            yield event
 
     # ------------------------------------------------------------------ helpers
+    def _remember(self, cache_key: Any, result: Dict[str, Any]) -> None:
+        """Cache a reviewer-approved answer so the same question replays instantly."""
+        if not self._cache_on:
+            return
+        self._cache[cache_key] = result
+        while len(self._cache) > 200:
+            self._cache.popitem(last=False)
+
     def _practice_summary(self, items: List[PracticeItem]) -> Check:
         verified = sum(1 for i in items if i.verified)
         if not items:

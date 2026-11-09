@@ -35,6 +35,24 @@ _URL_ENV_NAMES = (
 )
 _RETRY_STATUS = {502, 503, 504}
 
+# States reported by an on-demand model server (deploy/aws/lambda_function.py) while it is not up.
+SLEEP_MESSAGES = {
+    "sleeping": "The model is asleep to save cost. It wakes up when you ask a question (about 2-3 minutes).",
+    "starting": "The model is waking up. This takes about 2-3 minutes.",
+}
+
+
+def _sleep_state(res: Any) -> Optional[str]:
+    """'sleeping' / 'starting' when an on-demand server answered 503 with that status, else None."""
+    if getattr(res, "status_code", None) != 503:
+        return None
+    try:
+        body = res.json()
+    except ValueError:
+        return None
+    state = body.get("status") if isinstance(body, dict) else None
+    return state if state in SLEEP_MESSAGES else None
+
 
 class ModelUnavailable(RuntimeError):
     """The fine-tuned model could not be reached or failed to answer.
@@ -153,11 +171,20 @@ class ModelClient:
         headers = self._headers()
         for path in ("/health", "/api/health", "/api/ready", "/v1/models"):
             try:
-                res = requests.get(f"{self.url}{path}", headers=headers, timeout=3)
+                res = requests.get(f"{self.url}{path}", headers=headers, timeout=8)
             except Exception as exc:  # noqa: BLE001 - report any network failure
                 last = "no response"
                 log.warning("model health probe %s failed: %s", path, exc)
                 continue
+            state = _sleep_state(res)
+            if state:  # on-demand server (AWS): asleep or still starting, not broken
+                return {
+                    "configured": True,
+                    "reachable": False,
+                    "mode": mode,
+                    "state": state,
+                    "error": SLEEP_MESSAGES[state],
+                }
             if res.status_code == 200:
                 info: Dict[str, Any] = {}
                 try:
@@ -178,6 +205,50 @@ class ModelClient:
             "mode": mode,
             "error": f"Model server not reachable ({last}).",
         }
+
+    # ------------------------------------------------------------------- wake
+    def wake(self) -> Optional[str]:
+        """Ask an on-demand model server to start. Returns its state, or None if it has no /wake."""
+        if self.mode != "remote":
+            return None
+        import requests
+
+        try:
+            res = requests.post(f"{self.url}/wake", headers=self._headers(), timeout=15)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("model wake call failed: %s", exc)
+            return None
+        if res.status_code in (200, 202):
+            try:
+                return str(res.json().get("status") or "starting")
+            except ValueError:
+                return "starting"
+        return None
+
+    def wait_until_ready(self, timeout: Optional[float] = None, interval: float = 10.0,
+                         on_wait: Optional[Callable[[Dict[str, Any]], None]] = None) -> bool:
+        """Wake the server if it is asleep and poll until it answers (or ``timeout`` seconds pass)."""
+        if timeout is None:
+            try:
+                timeout = float(os.getenv("LLM_WAKE_TIMEOUT", "600"))
+            except ValueError:
+                timeout = 600.0
+        deadline = time.time() + timeout
+        woke = False
+        while True:
+            status = self.health(max_age=0)
+            if status.get("reachable"):
+                return True
+            if status.get("state") not in SLEEP_MESSAGES:
+                return False  # not an on-demand server, or it is really broken
+            if not woke or status.get("state") == "sleeping":
+                self.wake()
+                woke = True
+            if on_wait:
+                on_wait(status)
+            if time.time() + interval > deadline:
+                return False
+            time.sleep(interval)
 
     # ------------------------------------------------------------------- chat
     def chat(
@@ -225,7 +296,9 @@ class ModelClient:
             "stream": False,
         }
         last_error = "unknown error"
-        for attempt in range(2):  # one retry: free tunnels and cold starts are flaky
+        waited = False
+        attempt = 0
+        while attempt < 2:  # one retry: free tunnels and cold starts are flaky
             try:
                 res = requests.post(
                     f"{self.url}/v1/chat/completions",
@@ -235,8 +308,14 @@ class ModelClient:
                 )
             except requests.RequestException as exc:
                 last_error = f"{type(exc).__name__}: {exc}"
+                attempt += 1
                 time.sleep(1.5)
                 continue
+            if _sleep_state(res) and not waited:
+                waited = True  # the on-demand server was asleep: wait for it, then send again
+                if self.wait_until_ready():
+                    continue
+                raise ModelUnavailable("The model server did not wake up in time.")
             if res.status_code == 200:
                 try:
                     body = res.json()
@@ -250,7 +329,8 @@ class ModelClient:
                 except (KeyError, IndexError, TypeError) as exc:
                     raise ModelUnavailable(f"Unexpected response from model server: {exc}") from exc
             last_error = f"HTTP {res.status_code}: {res.text[:200]}"
-            if res.status_code in _RETRY_STATUS and attempt == 0:
+            attempt += 1
+            if res.status_code in _RETRY_STATUS and attempt == 1:
                 time.sleep(2.0)
                 continue
             break

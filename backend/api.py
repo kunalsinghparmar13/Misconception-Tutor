@@ -157,11 +157,18 @@ def backend_status():
         "remoteBackend": llm_stat.get("remoteBackend"),
         "agents": llm_stat.get("agents"),
         "modelOnly": llm_stat.get("modelOnly"),
+        "modelState": llm_stat.get("modelState"),
         "trainingMode": "offline_kaggle",
         "trainingSamplesCollected": (
             llm_stat["trainingSamplesCollected"]
         ),
     })
+
+
+@app.post("/api/model/wake")
+def wake_model():
+    """Start an on-demand (AWS) model server as soon as a learner opens the tutor."""
+    return jsonify(llm_engine.wake_model())
 
 
 # ==============================================================================

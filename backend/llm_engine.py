@@ -184,8 +184,11 @@ class LLMEngine:
         if agent_status is not None:
             is_loaded = bool(agent_status.get("reachable"))
             model_name = agent_status.get("model") or self.adapter_source
+            model_state = "ready" if is_loaded else (agent_status.get("state") or "offline")
             if is_loaded:
                 active_mode = f"Fine-tuned Gemma - 4-agent pipeline ({agent_status.get('mode')})"
+            elif model_state in ("sleeping", "starting"):
+                active_mode = f"Model {model_state} (starts on demand)"
             else:
                 active_mode = "Model offline"
             error = agent_status.get("error") or self.error
@@ -206,6 +209,7 @@ class LLMEngine:
             error = self.error or dep_error
             remote = {"reachable": is_remote_ready} if self.remote_backend_url else None
             configured = (self.adapter_dir / "adapter_config.json").exists() or bool(self.remote_backend_url)
+            model_state = "ready" if is_loaded else "offline"
 
         return {
             "configured": configured,
@@ -224,6 +228,7 @@ class LLMEngine:
             "remoteBackend": remote,
             "error": error,
             "modelOnly": model_only(),
+            "modelState": model_state,
         }
 
     def _try_load_peft(self) -> bool:
@@ -423,6 +428,19 @@ class LLMEngine:
             return self._unavailable_payload(exc)
         return self._finish_agent_result(result, subject, question, mode, learner_id)
 
+    def wake_model(self) -> Dict[str, Any]:
+        """Start an on-demand model server (AWS) early, e.g. when a learner opens the page."""
+        if not self.agents_active():
+            return {"status": "unsupported"}
+        client = self._agent_pipeline().client
+        health = client.health(max_age=0)
+        if health.get("reachable"):
+            client.wake()  # keeps an already-running server awake for another idle period
+            return {"status": "ready"}
+        if not health.get("state"):
+            return {"status": "unsupported"}  # e.g. a Kaggle tunnel: nothing to wake
+        return {"status": client.wake() or health.get("state")}
+
     def stream_agents(
         self, subject: str, question: str, mode: str = "diagnostic", learner_id: str = "student_demo",
         practice_count: Optional[int] = None,
@@ -432,6 +450,16 @@ class LLMEngine:
             yield {"event": "error", "status": "model_unavailable",
                    "message": "The four-agent pipeline is disabled (LLM_PIPELINE=0)."}
             return
+        client = self._agent_pipeline().client
+        health = client.health(max_age=0)
+        if not health.get("reachable") and health.get("state"):
+            # On-demand server (AWS) is asleep or starting: wake it and wait before the agents run.
+            yield {"event": "waking", "state": health.get("state"), "message": health.get("error")}
+            if not client.wait_until_ready():
+                yield {"event": "error", "status": "model_unavailable",
+                       "message": "The model did not wake up in time. Please try again in a minute."}
+                return
+            yield {"event": "awake"}
         for event in self._agent_pipeline().stream(question, subject, practice_count=practice_count):
             if event["event"] == "complete":
                 event = {"event": "complete", "result": self._finish_agent_result(event["result"], subject, question, mode, learner_id)}

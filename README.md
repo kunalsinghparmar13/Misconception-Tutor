@@ -89,6 +89,19 @@ Every answer comes from **your fine-tuned model** (`LLM/tutor-project.ipynb`; no
 4. **Reviewer** - deterministic checks decide pass/fail; the model's critique is advisory. Only reviewer-approved
    answers are logged as future training data.
 
+The agents are wired together as a [LangGraph](https://github.com/langchain-ai/langgraph) graph in
+[`LLM/tutor_agents/graph.py`](LLM/tutor_agents/graph.py):
+
+```
+ground -> explainer -> solver --(exact check fails, revisions left)--> revise --+
+                                  \                                    ^        |
+                                   \                                   +--------+
+                                    +--(passes / no revisions left)--> solved -> practice -> reviewer -> finish
+```
+
+Each node streams the progress events the page shows; a model failure in the explainer or solver ends the graph early with an
+`error` event. `TUTOR_FAST=0` allows one revision (fast mode allows none); set `max_revisions` on `TutorPipeline` to allow more.
+
 Endpoints: `POST /api/tutor` (JSON), `POST /api/tutor/stream` (NDJSON, one event per agent), `POST /api/practice/submit`,
 `GET /api/health`. If the model is unreachable the app returns 503, never canned text.
 

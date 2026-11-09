@@ -501,6 +501,20 @@
   // ---------------------------------------------------------------- stream handling
   function handleEvent(event, state) {
     switch (event.event) {
+      case 'waking':
+        showBanner('Waking up your tutor model on AWS. It sleeps when nobody is using it, so the first question takes about 2-3 minutes. Your question will run as soon as it is ready.', 'info');
+        setChip('explainer', 'Waking model...', 'work');
+        if (panels.explainer) panels.explainer.body.textContent = 'Starting the GPU server...';
+        setHint('Waking the model · about 2-3 minutes');
+        setPill('starting');
+        break;
+      case 'awake': {
+        const banner = document.getElementById('result-banner');
+        if (banner) banner.hidden = true;
+        setHint('Your tutor is working through it…');
+        setPill('ready');
+        break;
+      }
       case 'agent_start':
         setChip(event.agent, 'Working...', 'work');
         if (panels[event.agent]) panels[event.agent].body.textContent = 'The model is writing this part...';
@@ -675,18 +689,43 @@
     });
   }
 
+  let lastModelState = null;
+  const PILL_TEXT = {
+    ready: 'Sikora ready',
+    sleeping: 'Sleeping · wakes on your question',
+    starting: 'Waking up…',
+    offline: 'Tutor offline',
+  };
+
+  function setPill(state, title) {
+    if (!modelStatus) return;
+    modelStatus.textContent = PILL_TEXT[state] || PILL_TEXT.offline;
+    if (modelPill) {
+      modelPill.classList.toggle('is-offline', state === 'offline');
+      modelPill.classList.toggle('is-waking', state === 'sleeping' || state === 'starting');
+      if (title !== undefined) modelPill.title = title;
+    }
+  }
+
+  /** Opening the tutor starts a sleeping model, so it is often ready by the time a question is typed. */
+  async function wakeModelEarly() {
+    if (lastModelState !== 'sleeping' && lastModelState !== 'starting') return;
+    try {
+      const res = await apiFetch('/api/model/wake', { method: 'POST' });
+      const body = await res.json();
+      if (body.status === 'starting' || body.status === 'pending') setPill('starting');
+    } catch (e) { /* the question itself will wake it */ }
+  }
+
   async function refreshBackendStatus() {
     if (!modelStatus) return;
     try {
       const res = await fetch('/api/backend-status', { cache: 'no-store' });
       const s = await res.json();
       const agents = s.agents || {};
-      const online = Boolean(s.llmLoaded);
-      modelStatus.textContent = online ? 'Sikora ready' : 'Tutor offline';
-      if (modelPill) {
-        modelPill.classList.toggle('is-offline', !online);
-        modelPill.title = online ? String(s.model || 'fine-tuned model').split(' - ')[0] : (agents.error || s.llmError || '');
-      }
+      const state = s.llmLoaded ? 'ready' : (s.modelState || 'offline');
+      setPill(state, state === 'ready' ? String(s.model || 'fine-tuned model').split(' - ')[0] : (agents.error || s.llmError || ''));
+      lastModelState = state;
     } catch (e) {
       modelStatus.textContent = 'Server unreachable';
       if (modelPill) modelPill.classList.add('is-offline');
@@ -726,6 +765,6 @@
   textarea.maxLength = MAX_CHARS;
 
   loadAccount();
-  refreshBackendStatus();
+  refreshBackendStatus().then(wakeModelEarly);
   setInterval(refreshBackendStatus, 30000);
 })();

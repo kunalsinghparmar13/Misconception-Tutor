@@ -246,6 +246,10 @@
 .model-pill.is-offline { color: #8a3418; }
 .model-pill.is-offline .dot { background: var(--orange) !important; box-shadow: none !important; animation: none !important; }
 
+/* Header status pill: on-demand model asleep or starting */
+.model-pill.is-waking { color: #6b6a2a; }
+.model-pill.is-waking .dot { background: #e0b84c !important; }
+
 /* Send button while the tutor works */
 .send.is-busy { opacity: .55; pointer-events: none; }
 
