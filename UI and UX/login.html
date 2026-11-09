@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#f5f3ee">
+<title>Sign in · Sikora AI</title>
+<link rel="icon" type="image/png" href="/favicon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --paper: #f5f3ee; --white: #fffefa; --ink: #1c2823; --muted: #818b83; --line: #e4e4da;
+  --green: #bedc64; --deep: #203d32; --orange: #ee805a; --shadow: 0 12px 36px rgba(34, 51, 42, .07);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; }
+body {
+  font: 15px 'DM Sans', sans-serif;
+  color: var(--ink);
+  background:
+    radial-gradient(900px 520px at 12% 10%, rgba(190, 220, 100, .38), transparent 60%),
+    radial-gradient(760px 480px at 92% 90%, rgba(160, 222, 190, .40), transparent 60%),
+    #eef5de;
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 32px 16px;
+}
+.shell {
+  width: 100%;
+  max-width: 940px;
+  display: grid;
+  grid-template-columns: 1.05fr 1fr;
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  animation: rise .6s cubic-bezier(.2, .7, .2, 1) both;
+}
+@keyframes rise { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+.intro {
+  background: var(--deep);
+  color: #eef5de;
+  padding: 40px 38px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+.intro img { width: 168px; height: auto; background: var(--white); border-radius: 12px; padding: 8px 12px; }
+.eyebrow { font: 500 10px 'DM Mono', monospace; letter-spacing: 1.5px; text-transform: uppercase; color: #b9ccb9; }
+.intro h1 { margin: 0; font: 800 34px/1.08 Manrope, sans-serif; letter-spacing: -1.4px; }
+.intro h1 em { color: var(--green); font-style: normal; }
+.intro p { margin: 0; color: #c8d6c8; line-height: 1.6; }
+.points { list-style: none; margin: auto 0 0; padding: 0; display: grid; gap: 10px; font-size: 13px; color: #dfe9d4; }
+.points li { display: flex; gap: 10px; align-items: flex-start; }
+.points b { color: var(--green); }
+.panel { padding: 40px 38px; }
+.tabs { display: grid; grid-template-columns: 1fr 1fr; background: #f1f1ea; border-radius: 12px; padding: 4px; margin-bottom: 26px; }
+.tabs button {
+  border: 0; background: none; padding: 10px; border-radius: 9px; font: 600 13px 'DM Sans', sans-serif;
+  color: #657068; cursor: pointer;
+}
+.tabs button[aria-selected="true"] { background: var(--white); color: var(--deep); box-shadow: 0 1px 4px rgba(0, 0, 0, .06); }
+h2 { margin: 0 0 6px; font: 700 22px Manrope, sans-serif; letter-spacing: -.6px; }
+.sub { margin: 0 0 22px; color: var(--muted); font-size: 13px; }
+form { display: grid; gap: 14px; }
+label { display: grid; gap: 6px; font: 500 10px 'DM Mono', monospace; letter-spacing: 1.2px; text-transform: uppercase; color: #7f887f; }
+input {
+  width: 100%; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; font: 15px 'DM Sans', sans-serif;
+  color: var(--ink); background: #fbfbf7; letter-spacing: 0; text-transform: none;
+}
+input:focus { outline: 2px solid var(--green); outline-offset: 1px; background: #fff; }
+.pw { position: relative; }
+.pw input { padding-right: 70px; }
+.pw button {
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%); border: 0; background: none;
+  font: 500 11px 'DM Mono', monospace; color: var(--muted); cursor: pointer; padding: 6px;
+}
+.row { display: flex; justify-content: flex-end; margin-top: -4px; }
+.link { border: 0; background: none; color: #5d7d2a; font: 600 12px 'DM Sans', sans-serif; cursor: pointer; padding: 0; }
+.link:hover { text-decoration: underline; }
+.submit {
+  border: 0; border-radius: 12px; padding: 13px; background: var(--deep); color: #fff;
+  font: 700 14px 'DM Sans', sans-serif; cursor: pointer; margin-top: 4px;
+}
+.submit:hover { background: #2c5242; }
+.submit:disabled { opacity: .55; cursor: default; }
+.msg { border-radius: 12px; padding: 11px 13px; font-size: 13px; line-height: 1.5; }
+.msg.error { background: #fbe3d9; color: #8a3418; border: 1px solid #f3c3ae; }
+.msg.info { background: #f3f7e8; color: var(--deep); border: 1px solid #dbe8b6; }
+[hidden] { display: none !important; }
+.foot { margin-top: 22px; font-size: 12px; color: var(--muted); text-align: center; }
+@media (max-width: 760px) {
+  .shell { grid-template-columns: 1fr; }
+  .intro { padding: 28px 24px; }
+  .intro h1 { font-size: 27px; }
+  .points { display: none; }
+  .panel { padding: 28px 24px; }
+}
+@media (prefers-reduced-motion: reduce) { .shell { animation: none; } }
+</style>
+</head>
+<body>
+<main class="shell">
+  <section class="intro" aria-hidden="false">
+    <img src="/logo.png" alt="Sikora AI">
+    <div class="eyebrow">Your personal learning space</div>
+    <h1>Make sense of <em>the tricky bits.</em></h1>
+    <p>Sign in to keep your questions, practice rounds and progress in one place.</p>
+    <ul class="points">
+      <li><b>01</b><span>Finds the exact step where your maths or code went sideways.</span></li>
+      <li><b>02</b><span>Builds practice problems from your own mistake.</span></li>
+      <li><b>03</b><span>Remembers what you have mastered, only for you.</span></li>
+    </ul>
+  </section>
+
+  <section class="panel">
+    <div class="tabs" role="tablist" id="tabs">
+      <button type="button" role="tab" aria-selected="true" data-mode="signin">Sign in</button>
+      <button type="button" role="tab" aria-selected="false" data-mode="signup">Create account</button>
+    </div>
+
+    <h2 id="title">Welcome back</h2>
+    <p class="sub" id="subtitle">Sign in to continue learning.</p>
+
+    <form id="auth-form" novalidate>
+      <label id="name-field" hidden>Your name
+        <input id="name" name="name" type="text" autocomplete="name" maxlength="80" placeholder="Divyansh Kumar">
+      </label>
+      <label id="email-field">Email
+        <input id="email" name="email" type="email" autocomplete="email" required placeholder="you@example.com">
+      </label>
+      <label id="password-field">Password
+        <span class="pw">
+          <input id="password" name="password" type="password" autocomplete="current-password" required minlength="8" placeholder="At least 8 characters">
+          <button type="button" id="toggle-pw" aria-label="Show password">SHOW</button>
+        </span>
+      </label>
+      <div class="row" id="forgot-row"><button type="button" class="link" id="forgot">Forgot password?</button></div>
+      <div class="msg error" id="error" role="alert" hidden></div>
+      <div class="msg info" id="info" role="status" hidden></div>
+      <button class="submit" id="submit" type="submit">Sign in</button>
+    </form>
+
+    <p class="foot" id="foot">New here? <button type="button" class="link" data-switch="signup">Create an account</button></p>
+  </section>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
+<script src="/config.js"></script>
+<script src="/auth.js"></script>
+<script>
+(function () {
+  'use strict';
+  const auth = window.tutorAuth;
+  const form = document.getElementById('auth-form');
+  const nameField = document.getElementById('name-field');
+  const emailField = document.getElementById('email-field');
+  const passwordField = document.getElementById('password-field');
+  const password = document.getElementById('password');
+  const email = document.getElementById('email');
+  const nameInput = document.getElementById('name');
+  const submit = document.getElementById('submit');
+  const errorBox = document.getElementById('error');
+  const infoBox = document.getElementById('info');
+  const forgotRow = document.getElementById('forgot-row');
+  const tabs = document.getElementById('tabs');
+  const foot = document.getElementById('foot');
+  const params = new URLSearchParams(location.search);
+  const next = (params.get('next') || '/').startsWith('/') ? (params.get('next') || '/') : '/';
+  let mode = 'signin';
+
+  const COPY = {
+    signin: { title: 'Welcome back', sub: 'Sign in to continue learning.', button: 'Sign in' },
+    signup: { title: 'Create your account', sub: 'It takes a minute. Your work stays private to you.', button: 'Create account' },
+    reset: { title: 'Reset your password', sub: 'We will email you a link to choose a new password.', button: 'Send reset link' },
+    newpw: { title: 'Choose a new password', sub: 'Enter a new password for your account.', button: 'Save new password' },
+  };
+
+  function show(box, text) { box.textContent = text; box.hidden = !text; }
+  function clearMessages() { show(errorBox, ''); show(infoBox, ''); }
+
+  function setMode(m) {
+    mode = m;
+    const c = COPY[m];
+    document.getElementById('title').textContent = c.title;
+    document.getElementById('subtitle').textContent = c.sub;
+    submit.textContent = c.button;
+    nameField.hidden = m !== 'signup';
+    emailField.hidden = m === 'newpw';
+    passwordField.hidden = m === 'reset';
+    forgotRow.hidden = m !== 'signin';
+    tabs.hidden = m === 'reset' || m === 'newpw';
+    password.autocomplete = m === 'signin' ? 'current-password' : 'new-password';
+    tabs.querySelectorAll('button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.mode === m)));
+    foot.replaceChildren();
+    const link = document.createElement('button');
+    link.type = 'button';
+    link.className = 'link';
+    if (m === 'signin') {
+      foot.append('New here? ');
+      link.textContent = 'Create an account';
+      link.onclick = () => setMode('signup');
+    } else {
+      foot.append(m === 'signup' ? 'Already have an account? ' : '');
+      link.textContent = m === 'signup' ? 'Sign in' : 'Back to sign in';
+      link.onclick = () => setMode('signin');
+    }
+    foot.append(link);
+    clearMessages();
+  }
+
+  function friendly(error) {
+    const msg = (error && error.message) || 'Something went wrong. Please try again.';
+    if (/invalid login credentials/i.test(msg)) return 'That email and password do not match. Check them, or reset your password.';
+    if (/email not confirmed/i.test(msg)) return 'Please confirm your email first: open the link we sent you, then sign in.';
+    if (/already registered|already been registered/i.test(msg)) return 'An account with this email already exists. Sign in instead.';
+    if (/rate limit/i.test(msg)) return 'Too many attempts for now. Please wait a few minutes and try again.';
+    return msg;
+  }
+
+  tabs.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-mode]');
+    if (b) setMode(b.dataset.mode);
+  });
+  document.getElementById('forgot').addEventListener('click', () => setMode('reset'));
+  document.getElementById('toggle-pw').addEventListener('click', (e) => {
+    const hidden = password.type === 'password';
+    password.type = hidden ? 'text' : 'password';
+    e.currentTarget.textContent = hidden ? 'HIDE' : 'SHOW';
+    e.currentTarget.setAttribute('aria-label', hidden ? 'Hide password' : 'Show password');
+  });
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    clearMessages();
+    const addr = email.value.trim();
+    const pw = password.value;
+    if (mode !== 'newpw' && !/^\S+@\S+\.\S+$/.test(addr)) return show(errorBox, 'Enter a valid email address.');
+    if (mode !== 'reset' && pw.length < 8) return show(errorBox, 'Use a password with at least 8 characters.');
+    if (mode === 'signup' && !nameInput.value.trim()) return show(errorBox, 'Enter your name.');
+    submit.disabled = true;
+    try {
+      if (mode === 'signin') {
+        const { error } = await auth.client.auth.signInWithPassword({ email: addr, password: pw });
+        if (error) throw error;
+        location.replace(next);
+      } else if (mode === 'signup') {
+        const { data, error } = await auth.client.auth.signUp({
+          email: addr,
+          password: pw,
+          options: { data: { full_name: nameInput.value.trim() }, emailRedirectTo: location.origin + '/login' },
+        });
+        if (error) throw error;
+        if (data.session) {
+          location.replace(next);
+        } else {
+          setMode('signin');
+          email.value = addr;
+          show(infoBox, `Almost done: we sent a confirmation link to ${addr}. Open it, then sign in here.`);
+        }
+      } else if (mode === 'reset') {
+        const { error } = await auth.client.auth.resetPasswordForEmail(addr, { redirectTo: location.origin + '/login' });
+        if (error) throw error;
+        show(infoBox, `If ${addr} has an account, a reset link is on its way. Open it to choose a new password.`);
+      } else if (mode === 'newpw') {
+        const { error } = await auth.client.auth.updateUser({ password: pw });
+        if (error) throw error;
+        location.replace('/');
+      }
+    } catch (err) {
+      show(errorBox, friendly(err));
+    } finally {
+      submit.disabled = false;
+    }
+  });
+
+  auth.client.auth.onAuthStateChange((event) => {
+    if (event === 'PASSWORD_RECOVERY') setMode('newpw');
+  });
+
+  (async function start() {
+    if (params.get('expired')) show(infoBox, 'Your session ended. Please sign in again.');
+    const s = await auth.session();
+    if (s && !location.hash.includes('type=recovery')) location.replace(next);
+  })();
+
+  setMode('signin');
+  if (params.get('expired')) show(infoBox, 'Your session ended. Please sign in again.');
+})();
+</script>
+</body>
+</html>

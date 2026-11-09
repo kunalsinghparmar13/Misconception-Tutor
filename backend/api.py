@@ -17,9 +17,9 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-from flask import Flask, Response, jsonify, request, send_from_directory, stream_with_context
+from flask import Flask, Response, g, jsonify, request, send_from_directory, stream_with_context
 
-from backend import backend_code
+from backend import auth, backend_code
 from backend.llm_engine import llm_engine
 from backend.security.guard import prompt_guard
 from backend.security.sanitizer import sanitize_input_text, sanitize_math_answer
@@ -51,6 +51,20 @@ def add_no_cache_headers(response):
     return response
 
 
+@app.before_request
+def require_sign_in():
+    """Tutor routes run only for a signed-in Supabase user (see backend/auth.py)."""
+    g.user = None
+    if request.method == "OPTIONS" or not auth.is_protected(request.path) or not auth.auth_required():
+        return None
+    token = auth.bearer_token(request.headers.get("Authorization"))
+    user = auth.verify_token(token) if token else None
+    if not user:
+        return jsonify({"error": "Please sign in to use the tutor.", "status": "unauthenticated"}), 401
+    g.user = user
+    return None
+
+
 # ==============================================================================
 # SECTION 1: STATIC & ASSET ROUTES (Serving the approved UI/UX)
 # ==============================================================================
@@ -59,6 +73,35 @@ def add_no_cache_headers(response):
 def index():
     """Serves the Sikora AI interface (no-cache headers come from add_no_cache_headers)."""
     return send_from_directory(UI_DIR, "index.html")
+
+
+@app.get("/login")
+def login_page():
+    """Sign-in and sign-up page."""
+    return send_from_directory(UI_DIR, "login.html")
+
+
+@app.get("/logo.png")
+def logo_image():
+    return send_from_directory(UI_DIR, "logo.png")
+
+
+@app.get("/favicon.png")
+def favicon_image():
+    return send_from_directory(UI_DIR, "favicon.png")
+
+
+@app.get("/auth.js")
+def auth_script():
+    """Shared Supabase sign-in helpers for the pages."""
+    return send_from_directory(UI_DIR, "auth.js")
+
+
+@app.get("/config.js")
+def public_config():
+    """Supabase project URL and publishable key for the browser (both are public values)."""
+    body = "window.SUPABASE_CONFIG = " + json.dumps(auth.public_config()) + ";\n"
+    return Response(body, mimetype="application/javascript")
 
 
 @app.get("/app.js")

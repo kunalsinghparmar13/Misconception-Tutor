@@ -140,10 +140,10 @@ body.ready .subject:hover,body.ready .focus-card:hover{transform:perspective(900
     <button type="button" onclick="showToast('Your progress will appear as you learn.')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 19V5M4 19h17"/><path d="m7 15 4-4 3 2 6-7"/></svg><span>Progress</span></button>
   </nav>
   <div class="side-section"><div class="nav-label">Recent sessions</div><div class="recent"><button type="button" onclick="showToast('Session history selected.')">Quadratic equations</button><button type="button" onclick="showToast('Session history selected.')">Python recursion</button><button type="button" onclick="showToast('Session history selected.')">Chain rule practice</button></div></div>
-  <div class="rail-bottom"><div class="plan-card"><div class="plan-top"><span>WEEKLY GOAL</span><span>4 / 6</span></div><div class="meter"><i></i></div><div class="plan-note">Two more sessions to hit your goal.</div></div><div class="profile"><div class="avatar">DK</div><div><strong>Divyansh</strong><small>Free learner</small></div></div></div>
+  <div class="rail-bottom"><div class="plan-card"><div class="plan-top"><span>WEEKLY GOAL</span><span>4 / 6</span></div><div class="meter"><i></i></div><div class="plan-note">Two more sessions to hit your goal.</div></div><div class="profile"><div class="avatar" id="profile-avatar">··</div><div><strong id="profile-name">Learner</strong><small><button type="button" class="signout" id="sign-out">Sign out</button></small></div></div></div>
 </aside>
 <div class="main">
-  <header class="topbar"><div class="crumb">Workspace <span style="padding:0 7px;color:#b0b5ad">/</span> <b>Overview</b></div><div class="top-actions"><div class="model-pill" id="model-pill"><i class="dot"></i> <span id="model-status">Checking tutor…</span></div><button class="icon-btn" aria-label="Notifications" onclick="showToast('You’re all caught up.')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg></button></div></header>
+  <header class="topbar"><div class="crumb">Workspace <span style="padding:0 7px;color:#b0b5ad">/</span> <b>Overview</b></div><div class="top-actions"><div class="model-pill" id="model-pill"><i class="dot"></i> <span id="model-status">Checking tutor…</span></div><button class="icon-btn" id="sign-out-top" aria-label="Sign out" title="Sign out"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h3M16 17l5-5-5-5M21 12H9"/></svg></button><button class="icon-btn" aria-label="Notifications" onclick="showToast('You’re all caught up.')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg></button></div></header>
   <div class="layout">
     <main class="content">
       <div class="greeting"><div><div class="eyebrow">YOUR PERSONAL LEARNING SPACE</div><h1 aria-label="Make sense of the tricky bits."><span class="headline-word" style="--delay:.18s">Make</span> <span class="headline-word" style="--delay:.36s">sense</span> <span class="headline-word" style="--delay:.54s">of</span><br><em><span class="headline-word" style="--delay:.78s">the</span> <span class="headline-word" style="--delay:1.02s">tricky</span> <span class="headline-word" style="--delay:1.26s">bits.</span></em></h1><p>Bring a question, a wrong turn, or a half-finished thought.</p></div><div class="day-stamp">SATURDAY<b>Study session · 01</b></div></div>
@@ -278,5 +278,8 @@ function insertAtCursor(text){input.focus();let a=input.selectionStart,b=input.s
   }
 })();
 </script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
+<script src="/config.js"></script>
+<script src="/auth.js"></script>
 <script src="/app.js"></script>
 </body></html>

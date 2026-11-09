@@ -6,8 +6,13 @@
  * Everything coming from the server is inserted with textContent / DOM nodes (never innerHTML).
  * Styles for the result cards live in tutor.css.
  */
-(function () {
+(async function () {
   'use strict';
+
+  // Signed-in learners only (auth.js). Without Supabase configured the page still works for local testing.
+  const auth = window.tutorAuth || null;
+  const user = auth ? await auth.requireUser() : null;
+  const apiFetch = auth ? auth.apiFetch : fetch.bind(window);
 
   const MAX_CHARS = 4000;
   const textarea = document.getElementById('composer-input');
@@ -20,9 +25,11 @@
 
   let busy = false;
   let currentController = null;
+  let currentSessionId = null; // Supabase row for the question on screen
   const history = []; // { question, subject }
 
   function learnerId() {
+    if (user) return user.id;
     try {
       let id = localStorage.getItem('learner_id');
       if (!id) {
@@ -377,7 +384,7 @@
 
   async function nextRound(setId, note, rounds) {
     try {
-      const res = await fetch('/api/practice/next', {
+      const res = await apiFetch('/api/practice/next', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ set_id: setId }),
@@ -438,7 +445,7 @@
       const old = card.querySelector('[data-solution]');
       if (old) old.remove();
       try {
-        const res = await fetch('/api/practice/submit', {
+        const res = await apiFetch('/api/practice/submit', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -470,6 +477,16 @@
         }
         if (payload.explanation) box.appendChild(el('p', 't-muted', payload.explanation));
         card.appendChild(box);
+        if (auth) {
+          auth.savePracticeAttempt({
+            session_id: currentSessionId,
+            practice_id: q.id,
+            set_id: q.set_id,
+            misconception: q.target_misconception,
+            answer: input.value,
+            correct: payload.correct,
+          });
+        }
         if (onRound && payload.round) onRound(payload.round);
       } catch (error) {
         verdict.textContent = `Could not grade: ${error.message}`;
@@ -520,11 +537,12 @@
       b.addEventListener('click', async () => {
         b.disabled = true;
         try {
-          await fetch('/api/llm/feedback', {
+          await apiFetch('/api/llm/feedback', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ sample_id: result.sample_id, feedback: value }),
           });
+          if (auth) auth.saveFeedback(currentSessionId, value);
           wrap.textContent = 'Thanks for the feedback.';
         } catch (e) { b.disabled = false; }
       });
@@ -570,6 +588,7 @@
     if (!question) { textarea.focus(); return; }
     if (busy) return;
     const subject = activeSubject();
+    currentSessionId = null;
     textarea.value = '';
     textarea.dispatchEvent(new Event('input')); // index.html resizes the box and greys out Send
     setBusy(true);
@@ -579,7 +598,7 @@
     currentController = new AbortController();
     const state = { result: null, error: null };
     try {
-      const response = await fetch('/api/tutor/stream', {
+      const response = await apiFetch('/api/tutor/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ question, subject, mode: 'diagnostic', learner_id: learnerId() }),
@@ -603,6 +622,21 @@
       } else if (state.result) {
         history.unshift({ question, subject });
         renderHistory();
+        if (auth) {
+          const r = state.result;
+          currentSessionId = await auth.saveSession({
+            question,
+            subject,
+            misconception: r.misconception,
+            sample_id: r.sample_id,
+            result: {
+              agents: r.agents || null,
+              practice_set: r.practice_set || null,
+              answer: r.answer || null,
+              model: r.model || null,
+            },
+          });
+        }
         setHint('Done · Ask a follow-up or try the practice problems');
       }
     } catch (error) {
@@ -659,11 +693,39 @@
     }
   }
 
+  async function loadAccount() {
+    if (!auth || !user) return;
+    const p = await auth.profile(user);
+    const nameEl = document.getElementById('profile-name');
+    const avatar = document.getElementById('profile-avatar');
+    if (nameEl) {
+      nameEl.textContent = p.name;
+      nameEl.title = p.email;
+    }
+    if (avatar) {
+      const parts = p.name.trim().split(/\s+/);
+      avatar.textContent = ((parts[0] || '?')[0] + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase();
+    }
+    ['sign-out', 'sign-out-top'].forEach((id) => {
+      const button = document.getElementById(id);
+      if (button) button.addEventListener('click', () => auth.signOut());
+    });
+    const past = await auth.recentSessions(8);
+    const box = document.querySelector('.recent');
+    if (box) {
+      box.replaceChildren();
+      if (!past.length) box.appendChild(el('p', 't-muted t-recent-empty', 'Your questions will appear here.'));
+    }
+    past.reverse().forEach((row) => history.unshift({ question: row.question, subject: row.subject }));
+    renderHistory();
+  }
+
   // ---------------------------------------------------------------- wiring
   // index.html's Send button and Enter key call the global sendPrompt(); route them to the tutor.
   window.sendPrompt = ask;
   textarea.maxLength = MAX_CHARS;
 
+  loadAccount();
   refreshBackendStatus();
   setInterval(refreshBackendStatus, 30000);
 })();

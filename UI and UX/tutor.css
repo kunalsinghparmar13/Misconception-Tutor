@@ -230,6 +230,18 @@
   color: var(--muted);
 }
 
+/* Sidebar account */
+.signout {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: #889189;
+  font: 500 11px 'DM Sans', sans-serif;
+  cursor: pointer;
+}
+.signout:hover { color: #b4462a; text-decoration: underline; }
+.t-recent-empty { padding: 6px 12px; font-size: 12px; }
+
 /* Header status pill: offline state */
 .model-pill.is-offline { color: #8a3418; }
 .model-pill.is-offline .dot { background: var(--orange) !important; box-shadow: none !important; animation: none !important; }
