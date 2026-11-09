@@ -14,3 +14,6 @@ dist/
 
 LLM/checkpoint-*/
 .env.kaggle
+
+# Learners questions exported for fine-tuning (personal data, never commit)
+LLM/data/user_training*.jsonl

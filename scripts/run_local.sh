@@ -10,6 +10,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 # Optional: put LLM_BACKEND_URL / LLM_BACKEND_TOKEN in .env.kaggle (git-ignored) instead of exporting them.
+# Optional: other server settings, e.g. SUPABASE_SECRET_KEY to collect training examples (both files are git-ignored).
+if [ -f .env ]; then
+  set -a; . ./.env; set +a
+fi
 if [ -z "${LLM_BACKEND_URL:-}" ] && [ -f .env.kaggle ]; then
   set -a; . ./.env.kaggle; set +a
 fi

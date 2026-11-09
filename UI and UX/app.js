@@ -541,7 +541,7 @@
   }
 
   function addFeedback(result) {
-    if (!result || !result.sample_id) return;
+    if (!result || (!result.sample_id && !result.training_example_id)) return;
     const wrap = el('div', 't-feedback');
     wrap.appendChild(document.createTextNode('Was this helpful?'));
     ['helpful', 'unhelpful'].forEach((value) => {
@@ -554,7 +554,7 @@
           await apiFetch('/api/llm/feedback', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sample_id: result.sample_id, feedback: value }),
+            body: JSON.stringify({ sample_id: result.sample_id, training_example_id: result.training_example_id, feedback: value }),
           });
           if (auth) auth.saveFeedback(currentSessionId, value);
           wrap.textContent = 'Thanks for the feedback.';

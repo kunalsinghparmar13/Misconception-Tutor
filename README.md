@@ -102,6 +102,20 @@ ground -> explainer -> solver --(exact check fails, revisions left)--> revise --
 Each node streams the progress events the page shows; a model failure in the explainer or solver ends the graph early with an
 `error` event. `TUTOR_FAST=0` allows one revision (fast mode allows none); set `max_revisions` on `TutorPipeline` to allow more.
 
+### Learning from learners' questions
+
+The model keeps improving on real questions, without forgetting its original training (continued fine-tuning):
+
+1. **Collect** - each reviewer-approved answer is saved, with the learner's question, to the Supabase table
+   `training_examples` (server-side only; set `SUPABASE_SECRET_KEY` in `.env`). The page's 👍/👎 rating is attached.
+2. **Export** - `python scripts/export_user_training_data.py --mark-exported` keeps only approved, exactly-verified,
+   not-👎 examples that don't contradict a correct learner, drops user ids, and writes `LLM/data/user_training.jsonl`
+   (git-ignored) in the training notebook's format.
+3. **Continue training on Kaggle** - attach your current adapter, `user_training.jsonl` and (optional) the original
+   `llm_train.jsonl`, then run `LLM/train/continue_training.py`. It starts from your adapter, mixes in 3 original examples
+   per learner example so old skills stay, trains at `2e-5`, and reports held-out loss before/after.
+4. **Serve** the new adapter: `LLM_ADAPTER_PATH=<new folder> python LLM/serve/kaggle_serve_fast.py`.
+
 Endpoints: `POST /api/tutor` (JSON), `POST /api/tutor/stream` (NDJSON, one event per agent), `POST /api/practice/submit`,
 `GET /api/health`. If the model is unreachable the app returns 503, never canned text.
 

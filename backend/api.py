@@ -19,7 +19,7 @@ from typing import Any, Dict, Optional, Tuple
 
 from flask import Flask, Response, g, jsonify, request, send_from_directory, stream_with_context
 
-from backend import auth, backend_code
+from backend import auth, backend_code, training_store
 from backend.llm_engine import llm_engine
 from backend.security.guard import prompt_guard
 from backend.security.sanitizer import sanitize_input_text, sanitize_math_answer
@@ -509,12 +509,19 @@ def tutor_agents_stream():
     if not _tutor_slots.acquire(blocking=False):
         return jsonify({"error": "The tutor is busy with other learners. Please retry in a few seconds."}), 429
 
+    user_id = (g.user or {}).get("id")
+
     def generate():
         try:
             for event in llm_engine.stream_agents(
                 prepared["subject"], prepared["question"], prepared["mode"], prepared["learner_id"],
                 practice_count=prepared["practice_count"],
             ):
+                if event.get("event") == "complete" and isinstance(event.get("result"), dict):
+                    # Keep approved answers to continue fine-tuning the model on learners' questions.
+                    example_id = training_store.save_example(
+                        user_id, prepared["subject"], prepared["question"], event["result"])
+                    event["result"]["training_example_id"] = example_id
                 yield json.dumps(event, ensure_ascii=False) + "\n"
         except Exception:
             app.logger.exception("tutor stream failed")
@@ -644,11 +651,13 @@ def submit_feedback():
     feedback = str(data.get("feedback", "helpful")).strip()
     notes = data.get("notes")
 
-    if not sample_id:
+    if not sample_id and not data.get("training_example_id"):
         return jsonify({"error": "Sample ID is required."}), 400
 
     success = llm_engine.update_sample_feedback(sample_id, feedback, notes)
-    return jsonify({"success": success, "sample_id": sample_id})
+    example_id = str(data.get("training_example_id") or "").strip()
+    rated = training_store.rate_example((g.user or {}).get("id"), example_id, feedback) if example_id else False
+    return jsonify({"success": success, "sample_id": sample_id, "training_example_rated": rated})
 
 
 @app.get("/api/llm/dataset")

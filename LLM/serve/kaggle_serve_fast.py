@@ -97,7 +97,8 @@ def base_model() -> str:
 
 
 def convert_adapter(adapter_dir: str) -> Path:
-    out = WORK / "tutor-lora-f16.gguf"
+    # One converted file per adapter folder, so a newly trained adapter is never served from an old conversion.
+    out = WORK / f"tutor-lora-{Path(adapter_dir).name}-f16.gguf"
     if out.exists():
         return out
     sh([sys.executable, "-m", "pip", "install", "-q", "-e", str(LLAMA_DIR / "gguf-py")])
