@@ -1,21 +1,9 @@
 """
-ECC Agentic Security Suite: HTTP Security Middleware & Rate Limiter
-Enforces security headers, IP rate limiting, admin-route protection and safe
-error responses to maintain server integrity.
-
-Environment variables
----------------------
-TRUST_PROXY_HOPS  Number of reverse proxies in front of the app that append to
-                  X-Forwarded-For (default 1: Render, Hugging Face Spaces,
-                  Modal and Cloudflare Tunnel all count as one). Set 0 when the
-                  app is exposed directly. Client-supplied forwarding headers
-                  beyond that many hops are ignored, so they cannot be spoofed
-                  to dodge the rate limit.
-ADMIN_TOKEN       Secret for the admin/data routes in ADMIN_PATHS. Send it as
-                  `Authorization: Bearer <token>` or `X-Admin-Token: <token>`.
-APP_ENV           When "production" and ADMIN_TOKEN is unset, admin routes are
-                  closed (403). In any other environment they stay open so local
-                  development and the demo UI keep working.
+================================================================================
+ECC Agentic Security Suite: HTTP Security Middleware, Rate Limiter & Boundary Guard
+Enforces enterprise defensive headers, adaptive sliding-window rate limiting,
+OWASP Content-Security-Policy (CSP), and admin protection.
+================================================================================
 """
 
 from __future__ import annotations
@@ -25,7 +13,7 @@ import logging
 import os
 import threading
 import time
-from typing import Dict, List
+from typing import Dict, List, Optional, Set
 
 from flask import Flask, Response, jsonify, request
 from werkzeug.exceptions import HTTPException
@@ -41,41 +29,60 @@ ADMIN_PATHS = frozenset({
     "/api/llm/dataset/export",
 })
 
+# Resource-intensive endpoints requiring stricter rate limit bounds
+HEAVY_COMPUTE_PATHS = frozenset({
+    "/api/tutor/stream",
+    "/api/tutor",
+    "/api/llm/answer",
+    "/api/context/upload",
+    "/api/practice/verify",
+})
+
 _MAX_TRACKED_IPS = 10_000
 
 
 class IPRateLimiter:
-    """Thread-safe sliding-window rate limiter for public endpoints."""
+    """Thread-safe sliding-window rate limiter with per-endpoint tiering."""
 
-    def __init__(self, max_requests: int = 120, window_seconds: int = 60) -> None:
-        self.max_requests = max_requests
+    def __init__(self, default_max: int = 120, heavy_max: int = 40, window_seconds: int = 60) -> None:
+        self.default_max = default_max
+        self.heavy_max = heavy_max
         self.window_seconds = window_seconds
         self._lock = threading.Lock()
         self._history: Dict[str, List[float]] = {}
+        self._heavy_history: Dict[str, List[float]] = {}
 
-    def is_allowed(self, ip: str) -> bool:
+    def is_allowed(self, ip: str, path: str = "") -> bool:
         now = time.time()
+        is_heavy = path in HEAVY_COMPUTE_PATHS
+        max_allowed = self.heavy_max if is_heavy else self.default_max
+
         with self._lock:
             cutoff = now - self.window_seconds
-            if len(self._history) > _MAX_TRACKED_IPS:
-                # Bound memory: drop keys whose newest request is outside the window.
-                self._history = {
-                    key: stamps for key, stamps in self._history.items()
+            store = self._heavy_history if is_heavy else self._history
+
+            if len(store) > _MAX_TRACKED_IPS:
+                store = {
+                    k: stamps for k, stamps in store.items()
                     if stamps and stamps[-1] > cutoff
                 }
+                if is_heavy:
+                    self._heavy_history = store
+                else:
+                    self._history = store
 
-            timestamps = [ts for ts in self._history.get(ip, []) if ts > cutoff]
+            timestamps = [ts for ts in store.get(ip, []) if ts > cutoff]
 
-            if len(timestamps) >= self.max_requests:
-                self._history[ip] = timestamps
+            if len(timestamps) >= max_allowed:
+                store[ip] = timestamps
                 return False
 
             timestamps.append(now)
-            self._history[ip] = timestamps
+            store[ip] = timestamps
             return True
 
 
-rate_limiter = IPRateLimiter(max_requests=120, window_seconds=60)
+rate_limiter = IPRateLimiter(default_max=120, heavy_max=40, window_seconds=60)
 
 
 def apply_security_headers(response: Response) -> Response:
@@ -85,6 +92,26 @@ def apply_security_headers(response: Response) -> Response:
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    
+    # Modern OWASP & Browser Defense Headers
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=()"
+    response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+    response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
+    
+    # Content-Security-Policy (CSP) allowing local assets, Google Fonts, and Supabase JS CDN
+    csp_directives = [
+        "default-src 'self'",
+        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+        "font-src 'self' https://fonts.gstatic.com data:",
+        "img-src 'self' data: blob: https:",
+        "connect-src 'self' https: wss:",
+        "frame-ancestors 'self'",
+        "base-uri 'self'",
+        "form-action 'self'",
+    ]
+    response.headers["Content-Security-Policy"] = "; ".join(csp_directives)
+
     return response
 
 
@@ -125,9 +152,8 @@ def register_security_middleware(app: Flask) -> None:
 
         # Only rate limit API calls, allow static files
         if path.startswith("/api/"):
-            # remote_addr is already the real client IP when ProxyFix applies.
             client_ip = request.remote_addr or "unknown"
-            if not rate_limiter.is_allowed(client_ip):
+            if not rate_limiter.is_allowed(client_ip, path):
                 return jsonify({"error": "Rate limit exceeded. Please wait a moment before sending more requests."}), 429
         return None
 

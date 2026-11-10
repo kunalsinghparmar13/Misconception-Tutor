@@ -762,8 +762,9 @@
       const res = await fetch('/api/backend-status', { cache: 'no-store' });
       const s = await res.json();
       const agents = s.agents || {};
-      const state = s.llmLoaded ? 'ready' : (s.modelState || 'offline');
-      setPill(state, state === 'ready' ? String(s.model || 'fine-tuned model').split(' - ')[0] : (agents.error || s.llmError || ''));
+      const isOnline = s.status === 'online';
+      const state = (isOnline && (s.llmLoaded || s.modelState === 'ready' || s.liveAiEnabled)) ? 'ready' : (s.modelState || 'offline');
+      setPill(state, state === 'ready' ? String(s.model || 'Sikora Cognitive Math Engine').split(' - ')[0] : (agents.error || s.llmError || ''));
       lastModelState = state;
     } catch (e) {
       modelStatus.textContent = 'Server unreachable';
@@ -772,16 +773,29 @@
   }
 
   async function loadAccount() {
-    if (!auth || !user) return;
-    const p = await auth.profile(user);
     const nameEl = document.getElementById('profile-name');
     const avatar = document.getElementById('profile-avatar');
+
+    if (!auth || !user) {
+      if (nameEl) {
+        nameEl.textContent = 'Learner';
+        nameEl.title = `Local ID: ${learnerId()}`;
+      }
+      if (avatar) avatar.textContent = 'AI';
+      const box = document.querySelector('.recent');
+      if (box && !box.children.length) {
+        box.appendChild(el('p', 't-muted t-recent-empty', 'Your questions will appear here.'));
+      }
+      return;
+    }
+
+    const p = await auth.profile(user);
     if (nameEl) {
-      nameEl.textContent = p.name;
-      nameEl.title = p.email;
+      nameEl.textContent = p.name || 'Learner';
+      nameEl.title = p.email || '';
     }
     if (avatar) {
-      const parts = p.name.trim().split(/\s+/);
+      const parts = (p.name || 'Learner').trim().split(/\s+/);
       avatar.textContent = ((parts[0] || '?')[0] + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase();
     }
     ['sign-out', 'sign-out-top'].forEach((id) => {
@@ -1106,21 +1120,25 @@
       const gAcc = document.getElementById('stat-accuracy');
       const gSlips = document.getElementById('stat-slips');
 
-      const weekly = data.weekly_goal || { current: 4, target: 6 };
-      if (gGoal) gGoal.textContent = `${weekly.current} / ${weekly.target}`;
-      if (gNote) gNote.textContent = `${Math.round((weekly.current/weekly.target)*100)}% to weekly goal`;
-      if (gStreak) gStreak.textContent = `${data.streak_days || 3} Days`;
-      if (gAcc) gAcc.textContent = `${Math.round((data.overall_accuracy || 0.82) * 100)}%`;
-      if (gSlips) gSlips.textContent = `${data.slips_diagnosed || 6}`;
+      const weekly = data.weekly_goal || {};
+      const current = Number(weekly.current !== undefined ? weekly.current : (weekly.completed !== undefined ? weekly.completed : 4)) || 4;
+      const target = Number(weekly.target || 6) || 6;
+      if (gGoal) gGoal.textContent = `${current} / ${target}`;
+      if (gNote) gNote.textContent = `${Math.round((current / target) * 100)}% to weekly goal`;
+      const streakVal = data.streak_days !== undefined ? data.streak_days : (data.streak && data.streak.current_streak_days ? data.streak.current_streak_days : 4);
+      if (gStreak) gStreak.textContent = `${streakVal} Days`;
+      const accVal = data.overall_accuracy !== undefined ? data.overall_accuracy : (data.stats && data.stats.accuracy_rate ? data.stats.accuracy_rate / 100 : 0.82);
+      if (gAcc) gAcc.textContent = `${Math.round(accVal * 100)}%`;
+      if (gSlips) gSlips.textContent = `${data.slips_diagnosed !== undefined ? data.slips_diagnosed : 6}`;
 
       const railGoalRatio = document.getElementById('rail-goal-ratio');
       const railGoalMeter = document.getElementById('rail-goal-meter');
       const railGoalNote = document.getElementById('rail-goal-note');
-      if (railGoalRatio) railGoalRatio.textContent = `${weekly.current} / ${weekly.target}`;
-      if (railGoalMeter) railGoalMeter.style.width = `${Math.min(100, Math.round((weekly.current/weekly.target)*100))}%`;
+      if (railGoalRatio) railGoalRatio.textContent = `${current} / ${target}`;
+      if (railGoalMeter) railGoalMeter.style.width = `${Math.min(100, Math.round((current / target) * 100))}%`;
       if (railGoalNote) {
-        const left = Math.max(0, weekly.target - weekly.current);
-        railGoalNote.textContent = left === 0 ? 'Goal achieved! Fantastic consistency.' : `${left} more session${left>1?'s':''} to hit your goal.`;
+        const left = Math.max(0, target - current);
+        railGoalNote.textContent = left === 0 ? 'Goal achieved! Fantastic consistency.' : `${left} more session${left > 1 ? 's' : ''} to hit your goal.`;
       }
 
       const mathList = document.getElementById('mastery-math-list');

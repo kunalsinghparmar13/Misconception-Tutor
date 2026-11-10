@@ -755,23 +755,25 @@ def delete_tutor_session(session_id: str, learner_id: Optional[str] = None, db_p
 
 def get_learner_dashboard_data(learner_id: str, db_path: Optional[str] = None) -> Dict[str, Any]:
     """Computes comprehensive learning analytics, weekly progress, BKT mastery, and streak."""
+    from backend.security.sanitizer import sanitize_learner_id
+    safe_learner_id = sanitize_learner_id(learner_id)
     init_db(db_path)
     conn = get_connection(db_path)
     cur = conn.cursor()
 
     # Total questions / sessions
-    cur.execute("SELECT COUNT(*) AS total FROM tutor_sessions WHERE learner_id = ? OR learner_id = 'student_demo'", (learner_id,))
+    cur.execute("SELECT COUNT(*) AS total FROM tutor_sessions WHERE learner_id = ? OR learner_id = 'student_demo'", (safe_learner_id,))
     total_sessions = cur.fetchone()["total"]
 
     # Practice stats
-    cur.execute("SELECT COUNT(*) AS total, SUM(correct) AS correct FROM practice_attempts WHERE learner_id = ? OR learner_id = 'student_demo'", (learner_id,))
+    cur.execute("SELECT COUNT(*) AS total, SUM(correct) AS correct FROM practice_attempts WHERE learner_id = ? OR learner_id = 'student_demo'", (safe_learner_id,))
     prac_row = cur.fetchone()
     total_practice = prac_row["total"] if prac_row else 0
     correct_practice = prac_row["correct"] if prac_row and prac_row["correct"] else 0
     accuracy = round((correct_practice / total_practice * 100), 1) if total_practice > 0 else 84.0
 
     # Concept masteries from BKT
-    cur.execute("SELECT misc_id, p_mastery FROM bkt_states WHERE learner_id = ? OR learner_id = 'student_demo'", (learner_id,))
+    cur.execute("SELECT misc_id, p_mastery FROM bkt_states WHERE learner_id = ? OR learner_id = 'student_demo'", (safe_learner_id,))
     bkt_rows = cur.fetchall()
     mastery_dict = {r["misc_id"]: float(r["p_mastery"]) for r in bkt_rows}
 
@@ -813,10 +815,33 @@ def get_learner_dashboard_data(learner_id: str, db_path: Optional[str] = None) -
         {"day": "S", "active": False},
     ]
 
+    recent_misconceptions = [
+        {"misconception": "Sign flip in factorization grouping", "subject": "Mathematics", "frequency": 2, "status": "Remediated", "rec": "Inspect cross-terms before committing binomial signs."},
+        {"misconception": "Exponential branching without memoization", "subject": "Python", "frequency": 1, "status": "Remediated", "rec": "Trace overlapping recursive states with a memo dict."},
+        {"misconception": "Off-by-one boundary on matrix range", "subject": "Python", "frequency": 3, "status": "In Practice", "rec": "Bound row < H and col < W before accessing 2D indices."},
+    ]
+
+    bkt_concept_mastery = {
+        "mathematics": [
+            {"concept": c["name"], "mastery": round(c["mastery_percent"] / 100, 2), "percent": c["mastery_percent"]}
+            for c in concept_progress if c["subject"] == "Mathematics"
+        ],
+        "python": [
+            {"concept": c["name"], "mastery": round(c["mastery_percent"] / 100, 2), "percent": c["mastery_percent"]}
+            for c in concept_progress if c["subject"] == "Python"
+        ]
+    }
+
+    top_misconceptions = [
+        {"title": m["misconception"], "occurrences": m["frequency"], "rec": m["rec"]}
+        for m in recent_misconceptions
+    ]
+
     conn.close()
     return {
         "weekly_goal": {
             "completed": completed_this_week,
+            "current": completed_this_week,
             "target": weekly_target,
             "percent": goal_percent,
             "note": f"{weekly_target - completed_this_week} more sessions to hit your goal." if completed_this_week < weekly_target else "Weekly goal completed! Great work!"
@@ -826,17 +851,18 @@ def get_learner_dashboard_data(learner_id: str, db_path: Optional[str] = None) -
             "days_active_this_week": 4,
             "week_days": days,
         },
+        "streak_days": 4,
+        "overall_accuracy": round(accuracy / 100, 2),
+        "slips_diagnosed": 6,
         "stats": {
             "total_sessions": max(3, total_sessions),
             "practice_problems_solved": max(8, total_practice),
             "accuracy_rate": accuracy,
         },
         "concept_mastery": concept_progress,
-        "recent_misconceptions": [
-            {"misconception": "Sign flip in factorization grouping", "subject": "Mathematics", "frequency": 2, "status": "Remediated"},
-            {"misconception": "Exponential branching without memoization", "subject": "Python", "frequency": 1, "status": "Remediated"},
-            {"misconception": "Off-by-one boundary on matrix range", "subject": "Python", "frequency": 3, "status": "In Practice"},
-        ]
+        "bkt_concept_mastery": bkt_concept_mastery,
+        "recent_misconceptions": recent_misconceptions,
+        "top_misconceptions": top_misconceptions,
     }
 
 

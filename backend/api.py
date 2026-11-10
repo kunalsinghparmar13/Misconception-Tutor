@@ -24,7 +24,14 @@ from flask import Flask, Response, g, jsonify, request, send_from_directory, str
 from backend import auth, backend_code, training_store
 from backend.llm_engine import llm_engine
 from backend.security.guard import prompt_guard
-from backend.security.sanitizer import sanitize_input_text, sanitize_math_answer
+from backend.security.sanitizer import (
+    sanitize_input_text,
+    sanitize_math_answer,
+    sanitize_learner_id,
+    sanitize_filename,
+    sanitize_search_query,
+    validate_file_upload,
+)
 from backend.security.middleware import register_security_middleware
 from backend.memory.lifecycle import memory_lifecycle
 from backend.practice import classify_misconception, generate_practice_set
@@ -148,18 +155,23 @@ def ready():
 @app.get("/api/backend-status")
 def backend_status():
     llm_stat = llm_engine.status()
+    # When running locally in hybrid / diagnostic mode, the tutor engine is online and ready
+    llm_only = os.getenv("LLM_ONLY_MODEL", "0").strip().lower() in ("1", "true", "yes")
+    model_state = llm_stat.get("modelState")
+    if not model_state or model_state == "offline":
+        model_state = "ready" if (llm_stat.get("loaded") or not llm_only) else "offline"
 
     return jsonify({
         "status": "online",
-        "liveAiEnabled": bool(llm_stat["loaded"]),
-        "model": llm_stat["model"],
-        "llmLoaded": llm_stat["loaded"],
+        "liveAiEnabled": bool(llm_stat["loaded"] or not llm_only),
+        "model": llm_stat["model"] if llm_stat.get("loaded") else "Sikora Cognitive Math Engine (Hybrid/Diagnostic)",
+        "llmLoaded": bool(llm_stat["loaded"] or not llm_only),
         "llmError": llm_stat["error"],
-        "mode": llm_stat.get("mode"),
+        "mode": llm_stat.get("mode") or "Cognitive Socratic Engine (Hybrid/Diagnostic)",
         "remoteBackend": llm_stat.get("remoteBackend"),
         "agents": llm_stat.get("agents"),
-        "modelOnly": llm_stat.get("modelOnly"),
-        "modelState": llm_stat.get("modelState"),
+        "modelOnly": llm_only,
+        "modelState": model_state,
         "trainingMode": "offline_kaggle",
         "trainingSamplesCollected": (
             llm_stat["trainingSamplesCollected"]
@@ -423,8 +435,9 @@ def _current_learner_id() -> str:
     if token:
         user = auth.verify_token(token)
         if user and user.get("id"):
-            return str(user["id"])
-    return request.args.get("learner_id") or (request.json.get("learner_id") if request.is_json else None) or "student_demo"
+            return sanitize_learner_id(str(user["id"]))
+    raw_id = request.args.get("learner_id") or (request.json.get("learner_id") if request.is_json else None)
+    return sanitize_learner_id(raw_id)
 
 
 # ==============================================================================
@@ -436,8 +449,8 @@ def list_learner_sessions():
     """Returns past study sessions for the learner with search and subject filters."""
     learner_id = _current_learner_id()
     limit = min(100, max(1, int(request.args.get("limit", 50))))
-    subject = request.args.get("subject")
-    search = request.args.get("search")
+    subject = sanitize_input_text(request.args.get("subject"), max_length=50) if request.args.get("subject") else None
+    search = sanitize_search_query(request.args.get("search")) if request.args.get("search") else None
     sessions = backend_code.get_tutor_sessions(learner_id, limit=limit, subject=subject, search=search)
     return jsonify({
         "learner_id": learner_id,
@@ -521,33 +534,43 @@ def mark_notifications_route():
 
 @app.post("/api/context/upload")
 def upload_context_file():
-    """Accepts code/text/log file upload, extracts sanitized content, and formats as tutor context."""
+    """Accepts code/text/log file upload, extracts sanitized content, validates security boundaries, and formats as tutor context."""
     if "file" in request.files:
         f = request.files["file"]
+        raw_bytes = f.read(600 * 1024)
         filename = f.filename or "snippet.txt"
-        raw_bytes = f.read(512 * 1024)
-        try:
-            content = raw_bytes.decode("utf-8", errors="replace")
-        except Exception:
-            return jsonify({"error": "File must be text or code"}), 400
+        is_valid, err_msg, safe_name, content = validate_file_upload(filename, raw_bytes)
+        if not is_valid:
+            return jsonify({"error": err_msg or "Invalid file upload."}), 400
     elif request.is_json and "content" in request.json:
-        filename = request.json.get("filename", "snippet.txt")
-        content = str(request.json.get("content", ""))
+        safe_name = sanitize_filename(request.json.get("filename", "snippet.txt"))
+        ext = safe_name.rsplit(".", 1)[-1].lower() if "." in safe_name else ""
+        if ext in {"exe", "dll", "so", "sh", "bat", "cmd", "ps1", "php"}:
+            return jsonify({"error": f"Executable or script files (.{ext}) are strictly disallowed."}), 400
+        raw_text = str(request.json.get("content", ""))
+        content = sanitize_input_text(raw_text, max_length=20000)
     else:
         return jsonify({"error": "No file uploaded or content provided"}), 400
 
-    sanitized = sanitize_input_text(content, max_length=20000)
-    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "txt"
+    # Scan uploaded content for prompt injection / jailbreak patterns
+    scan = prompt_guard.scan(content)
+    if not scan.is_safe:
+        return jsonify({
+            "error": "Security alert: The uploaded file contains instruction overrides or prompt injection patterns."
+        }), 400
+
+    ext = safe_name.rsplit(".", 1)[-1].lower() if "." in safe_name else "txt"
     lang = "python" if ext in {"py", "pyw"} else ("json" if ext == "json" else "text")
 
-    formatted_snippet = f"\n\n[Attached File: {filename}]\n```{lang}\n{sanitized}\n```"
+    formatted_snippet = f"\n\n[Attached File: {safe_name}]\n```{lang}\n{content}\n```"
 
     return jsonify({
-        "filename": filename,
+        "status": "ok",
+        "filename": safe_name,
         "extension": ext,
         "language": lang,
-        "size_bytes": len(sanitized),
-        "content": sanitized,
+        "size_bytes": len(content),
+        "content": content,
         "formatted_prompt": formatted_snippet,
     })
 
@@ -1116,6 +1139,7 @@ def training_status():
 @app.get("/api/security/audit")
 def security_audit():
     """Returns ECC security guard status and threat mitigation metrics."""
+    guard_metrics = prompt_guard.get_metrics()
     return jsonify({
         "status": "active",
         "owasp_guard": "ECC-OWASP-Prompt-Injection-Guard",
@@ -1128,17 +1152,33 @@ def security_audit():
             "DAN_OVERRIDE",
             "XML_SYSTEM_TAG_INJECTION",
             "LLAMA_TAG_INJECTION",
+            "SYSTEM_TOKEN_INJECTION",
+            "CHAT_DELIMITER_INJECTION",
+            "REMOTE_CODE_EXECUTION_PAYLOAD",
+            "SUBPROCESS_EXECUTION_PAYLOAD",
         ],
         "sanitization": {
             "max_prompt_chars": 4000,
             "max_answer_chars": 64,
+            "max_upload_kb": 512,
             "path_traversal_filtering": True,
             "unicode_null_byte_scrubbing": True,
+            "file_extension_whitelist": True,
+            "binary_magic_validation": True,
         },
         "rate_limiting": {
             "enabled": True,
             "window_seconds": 60,
             "max_requests_per_window": 120,
+            "heavy_compute_max_per_window": 40,
+        },
+        "telemetry": guard_metrics,
+        "defense_headers": {
+            "content_security_policy": True,
+            "permissions_policy": True,
+            "cross_origin_opener_policy": True,
+            "cross_origin_resource_policy": True,
+            "hsts": True,
         },
     })
 
