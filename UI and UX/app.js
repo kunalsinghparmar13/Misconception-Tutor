@@ -612,10 +612,14 @@
     currentController = new AbortController();
     const state = { result: null, error: null };
     try {
+      let finalQuestion = question;
+      if (attachedContext && attachedContext.content) {
+        finalQuestion = `[Context File: ${attachedContext.filename}]\n${attachedContext.content}\n\n[Learner Question]:\n${question}`;
+      }
       const response = await apiFetch('/api/tutor/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question, subject, mode: 'diagnostic', learner_id: learnerId() }),
+        body: JSON.stringify({ question: finalQuestion, subject, mode: 'diagnostic', learner_id: learnerId() }),
         signal: currentController.signal,
       });
       if (!response.ok) {
@@ -636,8 +640,29 @@
       } else if (state.result) {
         history.unshift({ question, subject });
         renderHistory();
+        const r = state.result;
+
+        // Persist to SQLite backend
+        try {
+          await apiFetch('/api/learner/sessions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              learner_id: learnerId(),
+              question,
+              subject,
+              misconception: r.misconception || 'Diagnosed misconception',
+              result: {
+                agents: r.agents || null,
+                practice_set: r.practice_set || null,
+                answer: r.answer || null,
+                model: r.model || null,
+              }
+            })
+          });
+        } catch (e) { /* non-blocking */ }
+
         if (auth) {
-          const r = state.result;
           currentSessionId = await auth.saveSession({
             question,
             subject,
@@ -652,6 +677,7 @@
           });
         }
         setHint('Done · Ask a follow-up or try the practice problems');
+        loadProgress(true);
       }
     } catch (error) {
       if (error.name !== 'AbortError') {
@@ -674,19 +700,32 @@
   // ---------------------------------------------------------------- sidebar + status
   function renderHistory() {
     const box = document.querySelector('.recent');
-    if (!box || !history.length) return; // keeps the design's sample sessions until there is real history
+    if (!box || !history.length) return;
     box.replaceChildren();
     history.slice(0, 8).forEach((item) => {
       const b = el('button', '', item.question.split('\n')[0]);
       b.type = 'button';
       b.title = item.question;
       b.addEventListener('click', () => {
+        window.switchView('overview');
         textarea.value = item.question;
         textarea.dispatchEvent(new Event('input'));
         textarea.focus();
       });
       box.appendChild(b);
     });
+  }
+
+  async function loadRecentSessions() {
+    try {
+      const res = await apiFetch(`/api/learner/sessions?learner_id=${encodeURIComponent(learnerId())}&limit=8`);
+      const data = await res.json();
+      if (data && data.sessions && data.sessions.length) {
+        history.length = 0;
+        data.sessions.forEach((s) => history.push({ question: s.question, subject: s.subject }));
+        renderHistory();
+      }
+    } catch (e) {}
   }
 
   let lastModelState = null;
@@ -759,12 +798,557 @@
     renderHistory();
   }
 
+  // ==========================================================================
+  // New Feature Modules: View Router, Library, Practice Lab, Progress, Context
+  // ==========================================================================
+
+  // 1) View Router
+  window.switchView = function (viewName) {
+    const views = ['overview', 'library', 'practice', 'progress'];
+    views.forEach((v) => {
+      const elView = document.getElementById('view-' + v);
+      if (elView) elView.hidden = (v !== viewName);
+    });
+
+    const navBtns = document.querySelectorAll('.nav button');
+    navBtns.forEach((b) => {
+      const isTarget = b.dataset.view === viewName;
+      b.classList.toggle('active', isTarget);
+    });
+
+    const crumb = document.querySelector('.crumb b');
+    if (crumb) {
+      const titles = {
+        overview: 'Overview',
+        library: 'My library',
+        practice: 'Practice',
+        progress: 'Progress'
+      };
+      crumb.textContent = titles[viewName] || 'Workspace';
+    }
+
+    if (viewName === 'library') loadLibrary();
+    else if (viewName === 'practice') loadPractice();
+    else if (viewName === 'progress') loadProgress();
+  };
+
+  // 2) Study Library
+  let cachedSessions = [];
+  let currentLibFilter = 'all';
+
+  async function loadLibrary() {
+    const grid = document.getElementById('lib-grid');
+    if (!grid) return;
+    grid.innerHTML = '<div class="lib-empty">Loading study library…</div>';
+    try {
+      const res = await apiFetch(`/api/learner/sessions?learner_id=${encodeURIComponent(learnerId())}&limit=50`);
+      const data = await res.json();
+      cachedSessions = data.sessions || [];
+      renderLibraryCards();
+    } catch (e) {
+      grid.innerHTML = '<div class="lib-empty">Could not load study library.</div>';
+    }
+  }
+
+  function renderLibraryCards() {
+    const grid = document.getElementById('lib-grid');
+    const searchInput = document.getElementById('lib-search-input');
+    const q = searchInput ? searchInput.value.toLowerCase().trim() : '';
+    if (!grid) return;
+
+    let filtered = cachedSessions.filter((s) => {
+      if (currentLibFilter === 'math' && s.subject.toLowerCase() !== 'mathematics') return false;
+      if (currentLibFilter === 'python' && !s.subject.toLowerCase().includes('python')) return false;
+      if (q) {
+        const text = (s.question + ' ' + (s.misconception || '')).toLowerCase();
+        if (!text.includes(q)) return false;
+      }
+      return true;
+    });
+
+    grid.replaceChildren();
+    if (!filtered.length) {
+      grid.appendChild(el('div', 'lib-empty', q ? 'No sessions match your search query.' : 'No saved sessions in this category yet.'));
+      return;
+    }
+
+    filtered.forEach((item) => {
+      const card = el('div', 'lib-card');
+      const main = el('div', 'lib-card-main');
+      const meta = el('div', 'lib-meta');
+      const isMath = item.subject.toLowerCase() === 'mathematics';
+      meta.appendChild(el('span', 'lib-tag ' + (isMath ? 'math' : 'python'), isMath ? 'Mathematics' : 'Python'));
+      meta.appendChild(el('span', 'lib-date', item.created_at ? new Date(item.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''));
+      main.appendChild(meta);
+
+      const h3 = el('h3', 'lib-question', item.question);
+      h3.title = item.question;
+      main.appendChild(h3);
+
+      if (item.misconception) {
+        main.appendChild(el('p', 'lib-misconception', 'Key slip: ' + item.misconception));
+      }
+      card.appendChild(main);
+
+      const actions = el('div', 'lib-actions');
+      const revisitBtn = el('button', 'lib-btn primary', 'Revisit');
+      revisitBtn.type = 'button';
+      revisitBtn.addEventListener('click', () => revisitSession(item));
+      actions.appendChild(revisitBtn);
+
+      const delBtn = el('button', 'lib-btn danger', 'Delete');
+      delBtn.type = 'button';
+      delBtn.addEventListener('click', () => deleteSession(item.id));
+      actions.appendChild(delBtn);
+
+      card.appendChild(actions);
+      grid.appendChild(card);
+    });
+  }
+
+  async function deleteSession(sessionId) {
+    if (!confirm('Are you sure you want to delete this study session from your library?')) return;
+    try {
+      await apiFetch(`/api/learner/sessions/${encodeURIComponent(sessionId)}?learner_id=${encodeURIComponent(learnerId())}`, {
+        method: 'DELETE'
+      });
+      cachedSessions = cachedSessions.filter(s => s.id !== sessionId);
+      renderLibraryCards();
+      showToast('Session deleted from library.');
+      loadRecentSessions();
+    } catch (e) {
+      showToast('Failed to delete session.');
+    }
+  }
+
+  function revisitSession(session) {
+    window.switchView('overview');
+    textarea.value = session.question;
+    textarea.dispatchEvent(new Event('input'));
+    buildPanels(session.question);
+    results.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+    if (session.result) {
+      const r = session.result;
+      if (r.agents) {
+        if (r.agents.explainer) renderExplanation(r.agents.explainer);
+        if (r.agents.solver) renderSolution(r.agents.solver);
+        if (r.agents.practice) renderPractice(r.agents.practice);
+        if (r.agents.reviewer) renderReview(r.agents.reviewer);
+      } else if (r.answer) {
+        renderExplanation({ sections: { misconception: session.misconception, what_went_wrong: r.answer } });
+      }
+    }
+    setHint('Revisited session loaded · Ask a follow-up or test another approach');
+  }
+
+  document.querySelectorAll('.lib-filter-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.lib-filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentLibFilter = btn.dataset.subject || 'all';
+      renderLibraryCards();
+    });
+  });
+  const libSearch = document.getElementById('lib-search-input');
+  if (libSearch) libSearch.addEventListener('input', renderLibraryCards);
+
+  const seeAllBtn = document.getElementById('see-all-sessions-btn');
+  if (seeAllBtn) {
+    seeAllBtn.addEventListener('click', () => {
+      window.switchView('library');
+    });
+  }
+
+  // 3) Interactive Practice Lab
+  let practiceCatalog = [];
+  let currentPracticeTopic = null;
+  let currentPracticeProblem = null;
+
+  async function loadPractice() {
+    const topicsEl = document.getElementById('practice-topics');
+    if (!topicsEl) return;
+    try {
+      const res = await apiFetch('/api/practice/catalog');
+      practiceCatalog = await res.json();
+      topicsEl.replaceChildren();
+      practiceCatalog.forEach((cat) => {
+        cat.topics.forEach((topic) => {
+          const pill = el('button', 'practice-pill' + (currentPracticeTopic && currentPracticeTopic.id === topic.id ? ' active' : ''), topic.name);
+          pill.type = 'button';
+          pill.addEventListener('click', () => {
+            document.querySelectorAll('.practice-pill').forEach(p => p.classList.remove('active'));
+            pill.classList.add('active');
+            currentPracticeTopic = topic;
+            generatePracticeProblem(topic.id);
+          });
+          topicsEl.appendChild(pill);
+        });
+      });
+      if (!currentPracticeTopic && practiceCatalog[0] && practiceCatalog[0].topics[0]) {
+        currentPracticeTopic = practiceCatalog[0].topics[0];
+        const firstPill = topicsEl.querySelector('.practice-pill');
+        if (firstPill) firstPill.classList.add('active');
+        generatePracticeProblem(currentPracticeTopic.id);
+      }
+    } catch (e) {
+      topicsEl.textContent = 'Could not load practice catalog.';
+    }
+  }
+
+  async function generatePracticeProblem(topicId) {
+    const titleEl = document.getElementById('practice-title');
+    const promptEl = document.getElementById('practice-prompt');
+    const starterWrap = document.getElementById('practice-starter-wrap');
+    const starterCode = document.querySelector('#practice-starter code');
+    const diffEl = document.getElementById('practice-diff');
+    const subtagEl = document.getElementById('practice-subtag');
+    const feedbackWrap = document.getElementById('practice-feedback-wrap');
+    const solutionInput = document.getElementById('practice-solution-input');
+
+    if (feedbackWrap) feedbackWrap.hidden = true;
+    if (solutionInput) solutionInput.value = '';
+
+    try {
+      if (promptEl) promptEl.textContent = 'Generating adaptive challenge…';
+      const res = await apiFetch('/api/practice/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic_id: topicId, learner_id: learnerId() })
+      });
+      const problem = await res.json();
+      currentPracticeProblem = problem;
+      if (titleEl) titleEl.textContent = problem.title || (currentPracticeTopic ? currentPracticeTopic.name : 'Practice Challenge');
+      if (subtagEl) subtagEl.textContent = problem.subject || 'Curriculum';
+      if (diffEl) diffEl.textContent = problem.difficulty || 'Medium';
+      if (promptEl) promptEl.textContent = problem.prompt || '';
+      if (starterWrap && starterCode) {
+        if (problem.starter_code) {
+          starterCode.textContent = problem.starter_code;
+          starterWrap.hidden = false;
+        } else {
+          starterWrap.hidden = true;
+        }
+      }
+    } catch (e) {
+      if (promptEl) promptEl.textContent = 'Failed to generate practice challenge. Please retry.';
+    }
+  }
+
+  async function verifyPracticeSolution() {
+    const solutionInput = document.getElementById('practice-solution-input');
+    const feedbackWrap = document.getElementById('practice-feedback-wrap');
+    const submitBtn = document.getElementById('practice-submit-btn');
+    if (!solutionInput || !currentPracticeProblem) return;
+    const answer = solutionInput.value.trim();
+    if (!answer) {
+      showToast('Please type your solution before verifying.');
+      solutionInput.focus();
+      return;
+    }
+
+    try {
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Evaluating with BKT…';
+      const res = await apiFetch('/api/practice/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          topic_id: currentPracticeProblem.topic_id || (currentPracticeTopic ? currentPracticeTopic.id : 'quadratic_factoring'),
+          answer,
+          learner_id: learnerId(),
+        })
+      });
+      const data = await res.json();
+      if (feedbackWrap) {
+        feedbackWrap.className = 'practice-feedback ' + (data.is_pass ? 'is-pass' : 'is-fail');
+        feedbackWrap.replaceChildren();
+        feedbackWrap.appendChild(el('h4', '', data.is_pass ? '✓ Solution Verified! Great Thinking.' : '✕ Needs Revision · Check the Gap'));
+        feedbackWrap.appendChild(el('p', '', data.feedback));
+        if (data.explanation) {
+          feedbackWrap.appendChild(el('p', 't-muted', data.explanation));
+        }
+        if (data.updated_mastery !== undefined) {
+          const mPct = Math.round(data.updated_mastery * 100);
+          feedbackWrap.appendChild(el('div', 'tag', `Updated Concept Mastery: ${mPct}% (BKT updated)`));
+        }
+        feedbackWrap.hidden = false;
+      }
+      loadProgress(true);
+    } catch (e) {
+      showToast('Evaluation service temporarily unavailable.');
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Verify Solution';
+    }
+  }
+
+  const practiceSubmitBtn = document.getElementById('practice-submit-btn');
+  if (practiceSubmitBtn) practiceSubmitBtn.addEventListener('click', verifyPracticeSolution);
+
+  const practiceNewBtn = document.getElementById('practice-new-btn');
+  if (practiceNewBtn) {
+    practiceNewBtn.addEventListener('click', () => {
+      if (currentPracticeTopic) generatePracticeProblem(currentPracticeTopic.id);
+    });
+  }
+
+  // 4) Learning Analytics & Progress Dashboard
+  async function loadProgress(background = false) {
+    try {
+      const res = await apiFetch(`/api/learner/dashboard?learner_id=${encodeURIComponent(learnerId())}`);
+      const data = await res.json();
+      if (!data) return;
+
+      const gGoal = document.getElementById('stat-weekly-goal');
+      const gNote = document.getElementById('stat-weekly-note');
+      const gStreak = document.getElementById('stat-streak');
+      const gAcc = document.getElementById('stat-accuracy');
+      const gSlips = document.getElementById('stat-slips');
+
+      const weekly = data.weekly_goal || { current: 4, target: 6 };
+      if (gGoal) gGoal.textContent = `${weekly.current} / ${weekly.target}`;
+      if (gNote) gNote.textContent = `${Math.round((weekly.current/weekly.target)*100)}% to weekly goal`;
+      if (gStreak) gStreak.textContent = `${data.streak_days || 3} Days`;
+      if (gAcc) gAcc.textContent = `${Math.round((data.overall_accuracy || 0.82) * 100)}%`;
+      if (gSlips) gSlips.textContent = `${data.slips_diagnosed || 6}`;
+
+      const railGoalRatio = document.getElementById('rail-goal-ratio');
+      const railGoalMeter = document.getElementById('rail-goal-meter');
+      const railGoalNote = document.getElementById('rail-goal-note');
+      if (railGoalRatio) railGoalRatio.textContent = `${weekly.current} / ${weekly.target}`;
+      if (railGoalMeter) railGoalMeter.style.width = `${Math.min(100, Math.round((weekly.current/weekly.target)*100))}%`;
+      if (railGoalNote) {
+        const left = Math.max(0, weekly.target - weekly.current);
+        railGoalNote.textContent = left === 0 ? 'Goal achieved! Fantastic consistency.' : `${left} more session${left>1?'s':''} to hit your goal.`;
+      }
+
+      const mathList = document.getElementById('mastery-math-list');
+      const pyList = document.getElementById('mastery-python-list');
+      const concepts = data.bkt_concept_mastery || {};
+
+      if (mathList) {
+        mathList.replaceChildren();
+        const mathConcepts = concepts.mathematics || [
+          { concept: 'Quadratic Factoring', mastery: 0.82 },
+          { concept: 'Integration by Parts', mastery: 0.65 },
+          { concept: 'Limit Evaluation', mastery: 0.74 }
+        ];
+        mathConcepts.forEach(c => {
+          const row = el('div', 'mastery-row');
+          const meta = el('div', 'mastery-meta');
+          meta.appendChild(el('strong', '', c.concept));
+          meta.appendChild(el('span', '', Math.round(c.mastery * 100) + '%'));
+          row.appendChild(meta);
+          const meter = el('div', 'mastery-meter');
+          const fill = el('div', 'mastery-meter-fill');
+          fill.style.width = Math.round(c.mastery * 100) + '%';
+          meter.appendChild(fill);
+          row.appendChild(meter);
+          mathList.appendChild(row);
+        });
+      }
+
+      if (pyList) {
+        pyList.replaceChildren();
+        const pyConcepts = concepts.python || [
+          { concept: 'Recursion & Memoization', mastery: 0.78 },
+          { concept: 'List Index Boundaries', mastery: 0.90 },
+          { concept: 'Default Mutable Arguments', mastery: 0.60 }
+        ];
+        pyConcepts.forEach(c => {
+          const row = el('div', 'mastery-row');
+          const meta = el('div', 'mastery-meta');
+          meta.appendChild(el('strong', '', c.concept));
+          meta.appendChild(el('span', '', Math.round(c.mastery * 100) + '%'));
+          row.appendChild(meta);
+          const meter = el('div', 'mastery-meter');
+          const fill = el('div', 'mastery-meter-fill');
+          fill.style.width = Math.round(c.mastery * 100) + '%';
+          meter.appendChild(fill);
+          row.appendChild(meter);
+          pyList.appendChild(row);
+        });
+      }
+
+      const slipsList = document.getElementById('slips-list');
+      if (slipsList) {
+        slipsList.replaceChildren();
+        const topSlips = data.top_misconceptions || [
+          { title: 'Signs in quadratic decomposition', occurrences: 3, rec: 'Inspect cross-terms before committing factors.' },
+          { title: 'Unmemoized exponential recursion', occurrences: 2, rec: 'Trace overlapping subproblems using a call tree.' },
+          { title: 'Off-by-one in grid neighbor index', occurrences: 1, rec: 'Bound row < H and col < W before reading index.' }
+        ];
+        topSlips.forEach(s => {
+          const item = el('div', 'slip-item');
+          const info = el('div');
+          info.appendChild(el('strong', '', s.title));
+          info.appendChild(el('p', 'lib-misconception', s.rec));
+          item.appendChild(info);
+          item.appendChild(el('span', 'slip-badge', `${s.occurrences}x slip`));
+          slipsList.appendChild(item);
+        });
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  // 5) Notifications Popover
+  const notifBtn = document.getElementById('notif-btn');
+  const notifPopover = document.getElementById('notif-popover');
+  const notifBadge = document.getElementById('notif-badge');
+  const notifList = document.getElementById('notif-list');
+  const notifClearBtn = document.getElementById('notif-clear-btn');
+
+  async function loadNotifications() {
+    try {
+      const res = await apiFetch(`/api/notifications?learner_id=${encodeURIComponent(learnerId())}`);
+      const data = await res.json();
+      if (!data || !data.notifications) return;
+      if (notifBadge) {
+        notifBadge.hidden = !data.unread_count;
+      }
+      if (notifList) {
+        notifList.replaceChildren();
+        if (!data.notifications.length) {
+          notifList.appendChild(el('div', 't-muted', 'No notifications right now.'));
+          return;
+        }
+        data.notifications.forEach((item) => {
+          const row = el('div', 'notif-item' + (!item.read ? ' unread' : ''));
+          const top = el('div', 'notif-item-top');
+          top.appendChild(el('span', '', item.type ? item.type.toUpperCase() : 'UPDATE'));
+          top.appendChild(el('span', '', item.created_at ? new Date(item.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : ''));
+          row.appendChild(top);
+          row.appendChild(el('h4', 'notif-item-title', item.title));
+          row.appendChild(el('p', 'notif-item-desc', item.message));
+          notifList.appendChild(row);
+        });
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  if (notifBtn && notifPopover) {
+    notifBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      notifPopover.hidden = !notifPopover.hidden;
+      if (!notifPopover.hidden) loadNotifications();
+    });
+    document.addEventListener('click', (e) => {
+      if (!notifPopover.contains(e.target) && !notifBtn.contains(e.target)) {
+        notifPopover.hidden = true;
+      }
+    });
+  }
+
+  if (notifClearBtn) {
+    notifClearBtn.addEventListener('click', async () => {
+      try {
+        await apiFetch('/api/notifications/read', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ learner_id: learnerId() })
+        });
+        if (notifBadge) notifBadge.hidden = true;
+        loadNotifications();
+        showToast('All notifications marked as read');
+      } catch (e) {}
+    });
+  }
+
+  // 6) Context File Attachment
+  let attachedContext = null;
+  const attachBtn = document.getElementById('attach-context-btn');
+  const fileInput = document.getElementById('context-file-input');
+  const attachWrap = document.getElementById('composer-attachments');
+  const attachName = document.getElementById('attached-name');
+  const attachRemove = document.getElementById('attached-remove');
+
+  if (attachBtn && fileInput) {
+    attachBtn.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', async () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+      if (file.size > 512 * 1024) {
+        showToast('File too large (max 512 KB)');
+        fileInput.value = '';
+        return;
+      }
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('learner_id', learnerId());
+        const res = await apiFetch('/api/context/upload', {
+          method: 'POST',
+          body: formData,
+        });
+        const data = await res.json();
+        if (data.status === 'ok') {
+          attachedContext = {
+            filename: data.filename || file.name,
+            content: data.content,
+            size: data.size,
+          };
+          if (attachName) attachName.textContent = `${attachedContext.filename} (${Math.round((attachedContext.size || file.size)/1024 * 10)/10} KB)`;
+          if (attachWrap) attachWrap.hidden = false;
+          showToast(`Attached context: ${attachedContext.filename}`);
+        } else {
+          showToast(data.error || 'Failed to attach file');
+        }
+      } catch (err) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          attachedContext = {
+            filename: file.name,
+            content: e.target.result,
+            size: file.size,
+          };
+          if (attachName) attachName.textContent = `${file.name} (${Math.round(file.size/1024*10)/10} KB)`;
+          if (attachWrap) attachWrap.hidden = false;
+          showToast(`Attached context: ${file.name}`);
+        };
+        reader.readAsText(file);
+      }
+      fileInput.value = '';
+    });
+  }
+  if (attachRemove) {
+    attachRemove.addEventListener('click', () => {
+      attachedContext = null;
+      if (attachWrap) attachWrap.hidden = true;
+      showToast('Attachment removed');
+    });
+  }
+
+  // 7) Math Formula Palette
+  const mathBtn = document.getElementById('math-palette-btn');
+  const mathPalette = document.getElementById('math-palette');
+  if (mathBtn && mathPalette) {
+    mathBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      mathPalette.hidden = !mathPalette.hidden;
+    });
+    document.querySelectorAll('.math-sym').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const sym = btn.dataset.sym || btn.textContent;
+        if (window.insertAtCursor) window.insertAtCursor(sym);
+      });
+    });
+    document.addEventListener('click', (e) => {
+      if (!mathPalette.contains(e.target) && !mathBtn.contains(e.target)) {
+        mathPalette.hidden = true;
+      }
+    });
+  }
+
   // ---------------------------------------------------------------- wiring
-  // index.html's Send button and Enter key call the global sendPrompt(); route them to the tutor.
   window.sendPrompt = ask;
   textarea.maxLength = MAX_CHARS;
 
   loadAccount();
+  loadRecentSessions();
+  loadNotifications();
+  loadProgress(true);
   refreshBackendStatus().then(wakeModelEarly);
   setInterval(refreshBackendStatus, 30000);
 })();

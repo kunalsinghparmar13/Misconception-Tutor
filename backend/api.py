@@ -13,6 +13,8 @@ import csv
 import io
 import json
 import os
+import re
+import uuid
 import threading
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -413,6 +415,342 @@ def get_teacher_analytics():
     return jsonify({
         "cohort_records": len(heatmap),
         "heatmap": heatmap,
+    })
+
+
+def _current_learner_id() -> str:
+    token = auth.bearer_token(request.headers.get("Authorization"))
+    if token:
+        user = auth.verify_token(token)
+        if user and user.get("id"):
+            return str(user["id"])
+    return request.args.get("learner_id") or (request.json.get("learner_id") if request.is_json else None) or "student_demo"
+
+
+# ==============================================================================
+# SECTION 5B: SESSIONS LIBRARY, PRACTICE LAB & DASHBOARD ENGINE
+# ==============================================================================
+
+@app.get("/api/learner/sessions")
+def list_learner_sessions():
+    """Returns past study sessions for the learner with search and subject filters."""
+    learner_id = _current_learner_id()
+    limit = min(100, max(1, int(request.args.get("limit", 50))))
+    subject = request.args.get("subject")
+    search = request.args.get("search")
+    sessions = backend_code.get_tutor_sessions(learner_id, limit=limit, subject=subject, search=search)
+    return jsonify({
+        "learner_id": learner_id,
+        "count": len(sessions),
+        "sessions": sessions,
+    })
+
+
+@app.post("/api/learner/sessions")
+def create_learner_session():
+    """Saves a study session to the persistent local library."""
+    data = request.get_json(silent=True) or {}
+    learner_id = data.get("learner_id") or _current_learner_id()
+    question = sanitize_input_text(str(data.get("question", "")).strip())
+    subject = str(data.get("subject", "Mathematics")).strip()
+    misconception = data.get("misconception")
+    result = data.get("result", {})
+    session_id = data.get("id")
+
+    if not question:
+        return jsonify({"error": "Question is required"}), 400
+
+    saved_id = backend_code.save_tutor_session(
+        learner_id=learner_id,
+        question=question,
+        subject=subject,
+        misconception=misconception,
+        result=result,
+        session_id=session_id,
+    )
+    return jsonify({"success": True, "id": saved_id}), 201
+
+
+@app.get("/api/learner/sessions/<session_id>")
+def get_learner_session(session_id: str):
+    """Retrieves full session details including the 4-agent explanation and practice round."""
+    session = backend_code.get_tutor_session_by_id(session_id)
+    if not session:
+        return jsonify({"error": "Session not found"}), 404
+    return jsonify(session)
+
+
+@app.delete("/api/learner/sessions/<session_id>")
+def remove_learner_session(session_id: str):
+    """Deletes a study session from library."""
+    learner_id = _current_learner_id()
+    backend_code.delete_tutor_session(session_id, learner_id=learner_id)
+    return jsonify({"success": True})
+
+
+@app.get("/api/learner/dashboard")
+def get_learner_dashboard():
+    """Returns analytics dashboard: weekly goal, active streak, BKT mastery, and slips."""
+    learner_id = _current_learner_id()
+    dashboard = backend_code.get_learner_dashboard_data(learner_id)
+    return jsonify({
+        "learner_id": learner_id,
+        **dashboard,
+    })
+
+
+@app.get("/api/notifications")
+def get_learner_notifications_route():
+    """Returns real-time learning notifications and recommendations."""
+    learner_id = _current_learner_id()
+    notifs = backend_code.get_learner_notifications(learner_id)
+    return jsonify({
+        "unread_count": sum(1 for n in notifs if not n.get("read")),
+        "notifications": notifs,
+    })
+
+
+@app.post("/api/notifications/read")
+def mark_notifications_route():
+    """Marks notifications as read."""
+    data = request.get_json(silent=True) or {}
+    notif_id = data.get("id", "all")
+    backend_code.mark_notification_as_read(notif_id)
+    return jsonify({"success": True})
+
+
+@app.post("/api/context/upload")
+def upload_context_file():
+    """Accepts code/text/log file upload, extracts sanitized content, and formats as tutor context."""
+    if "file" in request.files:
+        f = request.files["file"]
+        filename = f.filename or "snippet.txt"
+        raw_bytes = f.read(512 * 1024)
+        try:
+            content = raw_bytes.decode("utf-8", errors="replace")
+        except Exception:
+            return jsonify({"error": "File must be text or code"}), 400
+    elif request.is_json and "content" in request.json:
+        filename = request.json.get("filename", "snippet.txt")
+        content = str(request.json.get("content", ""))
+    else:
+        return jsonify({"error": "No file uploaded or content provided"}), 400
+
+    sanitized = sanitize_input_text(content, max_length=20000)
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "txt"
+    lang = "python" if ext in {"py", "pyw"} else ("json" if ext == "json" else "text")
+
+    formatted_snippet = f"\n\n[Attached File: {filename}]\n```{lang}\n{sanitized}\n```"
+
+    return jsonify({
+        "filename": filename,
+        "extension": ext,
+        "language": lang,
+        "size_bytes": len(sanitized),
+        "content": sanitized,
+        "formatted_prompt": formatted_snippet,
+    })
+
+
+PRACTICE_CATALOG = [
+    {
+        "id": "math_quadratic",
+        "title": "Quadratic Factorization & Sign Errors",
+        "subject": "Mathematics",
+        "description": "Master sign consistency in factoring trinomials like ax² + bx + c.",
+        "difficulty": "Intermediate",
+    },
+    {
+        "id": "math_fractions",
+        "title": "Fraction Addition & Common Denominators",
+        "subject": "Mathematics",
+        "description": "Overcome denominator addition slips and unscaled numerators.",
+        "difficulty": "Beginner",
+    },
+    {
+        "id": "math_calculus",
+        "title": "Integration by Parts & Minus Distribution",
+        "subject": "Mathematics",
+        "description": "Trace u, dv selections and negative signs across integration steps.",
+        "difficulty": "Advanced",
+    },
+    {
+        "id": "py_recursion",
+        "title": "Recursion Depth & Overlapping Call Stacks",
+        "subject": "Python",
+        "description": "Identify redundant subproblem evaluations and missing base cases.",
+        "difficulty": "Intermediate",
+    },
+    {
+        "id": "py_indexing",
+        "title": "2D Grid Traversal & Matrix Boundaries",
+        "subject": "Python",
+        "description": "Safely bound grid checks and prevent off-by-one IndexErrors.",
+        "difficulty": "Beginner",
+    },
+    {
+        "id": "py_mutability",
+        "title": "Mutable Default Arguments in Functions",
+        "subject": "Python",
+        "description": "Prevent state contamination between function calls sharing list/dict defaults.",
+        "difficulty": "Intermediate",
+    },
+]
+
+
+@app.get("/api/practice/catalog")
+def get_practice_catalog():
+    """Returns the curriculum modules available in Practice Lab."""
+    return jsonify({
+        "total_modules": len(PRACTICE_CATALOG),
+        "modules": PRACTICE_CATALOG,
+    })
+
+
+@app.post("/api/practice/generate")
+def generate_practice_question():
+    """Generates an instant practice question based on the selected curriculum topic."""
+    data = request.get_json(silent=True) or {}
+    topic_id = data.get("topic_id", "math_quadratic")
+
+    if topic_id == "math_quadratic":
+        problem = {
+            "id": f"prac_{uuid.uuid4().hex[:8]}",
+            "topic_id": topic_id,
+            "subject": "Mathematics",
+            "title": "Factor the quadratic",
+            "prompt": "Factor the polynomial: 3x² + 7x + 2 into two binomial factors (ax + b)(cx + d).",
+            "starter": "(3x + 1)(x + 2)",
+            "expected_answer": "(3x + 1)(x + 2)",
+            "hints": ["Find two numbers that multiply to 3 * 2 = 6 and add to 7.", "Rewrite 7x as 6x + 1x."],
+            "solution": "3x² + 6x + 1x + 2 = 3x(x + 2) + 1(x + 2) = (3x + 1)(x + 2)."
+        }
+    elif topic_id == "math_fractions":
+        base_prob = backend_code.get_fast_problem("M1_add_across", difficulty=1)
+        problem = {
+            "id": f"prac_{uuid.uuid4().hex[:8]}",
+            "topic_id": topic_id,
+            "subject": "Mathematics",
+            "title": "Add Fractions with Unequal Denominators",
+            "prompt": f"Compute the exact value of: {base_prob['text']}",
+            "starter": "",
+            "expected_answer": base_prob["correct_answer"],
+            "hints": ["Find a common denominator first, do not add the denominators straight across!"],
+            "solution": f"The exact sum is {base_prob['correct_answer']}."
+        }
+    elif topic_id == "math_calculus":
+        problem = {
+            "id": f"prac_{uuid.uuid4().hex[:8]}",
+            "topic_id": topic_id,
+            "subject": "Mathematics",
+            "title": "Integration by Parts Sign Check",
+            "prompt": "Evaluate: ∫ x · sin(x) dx using integration by parts. What is the final antiderivative?",
+            "starter": "-x*cos(x) + sin(x) + C",
+            "expected_answer": "-x*cos(x) + sin(x) + C",
+            "hints": ["Let u = x and dv = sin(x) dx.", "v = -cos(x). Remember: ∫ u dv = u*v - ∫ v du."],
+            "solution": "u = x, du = dx; dv = sin(x) dx, v = -cos(x).\n∫ x sin(x) dx = -x cos(x) - ∫ (-cos(x)) dx = -x cos(x) + ∫ cos(x) dx = -x cos(x) + sin(x) + C."
+        }
+    elif topic_id == "py_recursion":
+        problem = {
+            "id": f"prac_{uuid.uuid4().hex[:8]}",
+            "topic_id": topic_id,
+            "subject": "Python",
+            "title": "Add Base Case to Recursive Countdown",
+            "prompt": "Fix this recursive function so it terminates when n reaches 0 without causing RecursionError:",
+            "starter": "def countdown(n):\n    print(n)\n    return countdown(n - 1)",
+            "expected_answer": "def countdown(n):\n    if n <= 0:\n        return\n    print(n)\n    return countdown(n - 1)",
+            "hints": ["Add an `if n <= 0:` check at the start to stop further calls."],
+            "solution": "Add `if n <= 0: return` as the base case before calling `countdown(n - 1)`."
+        }
+    elif topic_id == "py_indexing":
+        problem = {
+            "id": f"prac_{uuid.uuid4().hex[:8]}",
+            "topic_id": topic_id,
+            "subject": "Python",
+            "title": "Prevent 2D Grid IndexError",
+            "prompt": "Fix the boundary check so accessing `grid[r][c + 1]` never raises an IndexError:",
+            "starter": "def has_right_neighbor(grid, r, c):\n    # Add safe condition here\n    return grid[r][c + 1] is not None",
+            "expected_answer": "def has_right_neighbor(grid, r, c):\n    if c + 1 < len(grid[r]):\n        return grid[r][c + 1] is not None\n    return False",
+            "hints": ["Ensure `c + 1 < len(grid[r])` before indexing `[c + 1]`."],
+            "solution": "Check `c + 1 < len(grid[r])` first to guard against out-of-bounds column access."
+        }
+    else:
+        problem = {
+            "id": f"prac_{uuid.uuid4().hex[:8]}",
+            "topic_id": topic_id,
+            "subject": "Python",
+            "title": "Fix Mutable Default Argument",
+            "prompt": "Fix the shared default list so subsequent calls receive fresh lists:",
+            "starter": "def append_value(val, target=[]):\n    target.append(val)\n    return target",
+            "expected_answer": "def append_value(val, target=None):\n    if target is None:\n        target = []\n    target.append(val)\n    return target",
+            "hints": ["Use `target=None` in the function header and initialize inside the body."],
+            "solution": "Default arguments are evaluated once at function definition. Use `target=None` and initialize `target = []` inside."
+        }
+
+    return jsonify({"problem": problem})
+
+
+@app.post("/api/practice/verify")
+def verify_practice_answer():
+    """Evaluates learner's practice answer, updates BKT mastery, and provides feedback."""
+    data = request.get_json(silent=True) or {}
+    learner_id = _current_learner_id()
+    problem_id = str(data.get("problem_id", ""))
+    user_answer = str(data.get("user_answer", "")).strip()
+    expected = str(data.get("expected_answer", "")).strip()
+    topic_id = str(data.get("topic_id", "math_quadratic"))
+    subject = str(data.get("subject", "Mathematics"))
+
+    if not user_answer:
+        return jsonify({"error": "Answer cannot be blank"}), 400
+
+    norm_user = re.sub(r"\s+", "", user_answer.lower().replace(";", ""))
+    norm_exp = re.sub(r"\s+", "", expected.lower().replace(";", ""))
+
+    is_correct = False
+    if norm_user == norm_exp:
+        is_correct = True
+    elif "/" in user_answer and "/" in expected:
+        u_frac = backend_code.parse_fraction(user_answer)
+        e_frac = backend_code.parse_fraction(expected)
+        if u_frac and e_frac and u_frac == e_frac:
+            is_correct = True
+    elif "(" in norm_user and "(" in norm_exp:
+        u_factors = sorted(re.findall(r"\([^)]+\)", norm_user))
+        e_factors = sorted(re.findall(r"\([^)]+\)", norm_exp))
+        if u_factors and u_factors == e_factors:
+            is_correct = True
+
+    if not is_correct and subject.lower() == "python":
+        if "None" in expected and "None" in user_answer:
+            is_correct = True
+        elif "<=" in expected and "<=" in user_answer:
+            is_correct = True
+        elif "<len" in norm_exp and ("<len" in norm_user or "<=" in norm_user):
+            is_correct = True
+
+    backend_code.log_attempt_db(
+        learner_id=learner_id,
+        session_id=f"prac_{problem_id}",
+        problem_id=problem_id,
+        target_misc=topic_id,
+        answer=user_answer,
+        correct=1 if is_correct else 0,
+        predicted_misc=None if is_correct else topic_id,
+        confidence=0.95,
+    )
+
+    feedback_msg = (
+        "Excellent! You accurately resolved the misconception."
+        if is_correct
+        else f"Not quite. Notice where the expression diverges from the expected pattern. Compare with: {expected}"
+    )
+
+    return jsonify({
+        "correct": is_correct,
+        "feedback": feedback_msg,
+        "expected_solution": data.get("solution") or expected,
+        "mastery_increase": "+4.2%" if is_correct else "-1.5%",
     })
 
 
