@@ -440,6 +440,11 @@ def _current_learner_id() -> str:
     return sanitize_learner_id(raw_id)
 
 
+def _current_auth_token() -> Optional[str]:
+    """Extracts raw JWT Bearer token if present to scope Supabase RLS operations."""
+    return auth.bearer_token(request.headers.get("Authorization"))
+
+
 # ==============================================================================
 # SECTION 5B: SESSIONS LIBRARY, PRACTICE LAB & DASHBOARD ENGINE
 # ==============================================================================
@@ -448,10 +453,11 @@ def _current_learner_id() -> str:
 def list_learner_sessions():
     """Returns past study sessions for the learner with search and subject filters."""
     learner_id = _current_learner_id()
+    token = _current_auth_token()
     limit = min(100, max(1, int(request.args.get("limit", 50))))
     subject = sanitize_input_text(request.args.get("subject"), max_length=50) if request.args.get("subject") else None
     search = sanitize_search_query(request.args.get("search")) if request.args.get("search") else None
-    sessions = backend_code.get_tutor_sessions(learner_id, limit=limit, subject=subject, search=search)
+    sessions = backend_code.get_tutor_sessions(learner_id, limit=limit, subject=subject, search=search, auth_token=token)
     return jsonify({
         "learner_id": learner_id,
         "count": len(sessions),
@@ -461,9 +467,10 @@ def list_learner_sessions():
 
 @app.post("/api/learner/sessions")
 def create_learner_session():
-    """Saves a study session to the persistent local library."""
+    """Saves a study session to persistent Supabase cloud & local library."""
     data = request.get_json(silent=True) or {}
     learner_id = data.get("learner_id") or _current_learner_id()
+    token = _current_auth_token()
     question = sanitize_input_text(str(data.get("question", "")).strip())
     subject = str(data.get("subject", "Mathematics")).strip()
     misconception = data.get("misconception")
@@ -480,6 +487,7 @@ def create_learner_session():
         misconception=misconception,
         result=result,
         session_id=session_id,
+        auth_token=token,
     )
     return jsonify({"success": True, "id": saved_id}), 201
 
@@ -487,7 +495,8 @@ def create_learner_session():
 @app.get("/api/learner/sessions/<session_id>")
 def get_learner_session(session_id: str):
     """Retrieves full session details including the 4-agent explanation and practice round."""
-    session = backend_code.get_tutor_session_by_id(session_id)
+    token = _current_auth_token()
+    session = backend_code.get_tutor_session_by_id(session_id, auth_token=token)
     if not session:
         return jsonify({"error": "Session not found"}), 404
     return jsonify(session)
@@ -495,9 +504,10 @@ def get_learner_session(session_id: str):
 
 @app.delete("/api/learner/sessions/<session_id>")
 def remove_learner_session(session_id: str):
-    """Deletes a study session from library."""
+    """Deletes a study session from library and Supabase."""
     learner_id = _current_learner_id()
-    backend_code.delete_tutor_session(session_id, learner_id=learner_id)
+    token = _current_auth_token()
+    backend_code.delete_tutor_session(session_id, learner_id=learner_id, auth_token=token)
     return jsonify({"success": True})
 
 
@@ -505,7 +515,8 @@ def remove_learner_session(session_id: str):
 def get_learner_dashboard():
     """Returns analytics dashboard: weekly goal, active streak, BKT mastery, and slips."""
     learner_id = _current_learner_id()
-    dashboard = backend_code.get_learner_dashboard_data(learner_id)
+    token = _current_auth_token()
+    dashboard = backend_code.get_learner_dashboard_data(learner_id, auth_token=token)
     return jsonify({
         "learner_id": learner_id,
         **dashboard,
@@ -514,9 +525,10 @@ def get_learner_dashboard():
 
 @app.get("/api/notifications")
 def get_learner_notifications_route():
-    """Returns real-time learning notifications and recommendations."""
+    """Returns real-time learning notifications and recommendations from Supabase / local."""
     learner_id = _current_learner_id()
-    notifs = backend_code.get_learner_notifications(learner_id)
+    token = _current_auth_token()
+    notifs = backend_code.get_learner_notifications(learner_id, auth_token=token)
     return jsonify({
         "unread_count": sum(1 for n in notifs if not n.get("read")),
         "notifications": notifs,
@@ -525,10 +537,12 @@ def get_learner_notifications_route():
 
 @app.post("/api/notifications/read")
 def mark_notifications_route():
-    """Marks notifications as read."""
+    """Marks notifications as read in Supabase and local cache."""
     data = request.get_json(silent=True) or {}
     notif_id = data.get("id", "all")
-    backend_code.mark_notification_as_read(notif_id)
+    learner_id = _current_learner_id()
+    token = _current_auth_token()
+    backend_code.mark_notification_as_read(notif_id, learner_id=learner_id, auth_token=token)
     return jsonify({"success": True})
 
 
@@ -871,6 +885,7 @@ def tutor_agents_stream():
         return jsonify({"error": "The tutor is busy with other learners. Please retry in a few seconds."}), 429
 
     user_id = (g.user or {}).get("id")
+    token = _current_auth_token()
 
     def generate():
         try:
@@ -883,6 +898,16 @@ def tutor_agents_stream():
                     example_id = training_store.save_example(
                         user_id, prepared["subject"], prepared["question"], event["result"])
                     event["result"]["training_example_id"] = example_id
+                    # Persist session to tutor library and Supabase cloud
+                    backend_code.save_tutor_session(
+                        learner_id=user_id or prepared["learner_id"],
+                        question=prepared["question"],
+                        subject=prepared["subject"],
+                        misconception=event["result"].get("misconception"),
+                        result=event["result"],
+                        session_id=event["result"].get("sample_id"),
+                        auth_token=token,
+                    )
                 yield json.dumps(event, ensure_ascii=False) + "\n"
         except Exception:
             app.logger.exception("tutor stream failed")
@@ -954,6 +979,7 @@ def submit_practice_attempt():
             ),
         }
 
+    token = _current_auth_token()
     backend_code.log_practice_attempt(
         learner_id=learner_id,
         session_id=session_id,
@@ -961,6 +987,8 @@ def submit_practice_attempt():
         subject=subject,
         misconception=misconception,
         correct=correct,
+        auth_token=token,
+        answer=answer,
     )
     round_info = None
     if stored and stored.get("set_id"):

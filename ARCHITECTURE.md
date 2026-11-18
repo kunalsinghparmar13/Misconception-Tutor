@@ -44,8 +44,9 @@ flowchart TD
         ToolExec --> Tools
     end
 
-    subgraph StorageLayer ["6. Persistence & Continuous Learning Engine"]
-        SQLite["SQLite Database (data/tutor.db · WAL Mode)\n• Learner Sessions\n• Bayesian Knowledge Tracing (Corbett & Anderson 1995)\n• Cohort Analytics & Belief Scores"]
+    subgraph StorageLayer ["6. Cloud & Edge Persistence Engine (Supabase + SQLite WAL)"]
+        Supabase["Supabase Cloud Postgres (PostgREST API + RLS)\n• Learner Study Sessions (tutor_sessions)\n• Practice Attempts (practice_attempts)\n• Bayesian Knowledge Tracing (bkt_states)\n• Real-Time Alerts (learner_notifications)\n• Continuous Training Examples (training_examples)"]
+        SQLite["Local SQLite Cache (data/tutor.db · WAL Mode)\n• Offline & Low-Latency Fallback\n• Pre-Seeded Starter Cohort Demo Data\n• Write-Ahead Logging & Volume Persistence"]
         Dataset["Continuous Training Dataset (LLM/data/continuous_training_dataset.jsonl)\n• 80+ Structured Instruction-Tuning Pairs\n• Quality Tagging & Human Feedback Ratings"]
         Trainer["Continuous Fine-Tuning Orchestrator (backend/trainer.py)\n• Gradient Descent Optimization Simulation\n• Loss Descent Monitoring (0.5226 → 0.1710)\n• Checkpoint Advancement (checkpoint-923 → 1003 → 1083)"]
     end

@@ -31,7 +31,11 @@ from functools import lru_cache
 from fractions import Fraction
 from math import lcm
 from typing import Dict, List, Tuple, Optional, Any, Callable
+import logging
 from backend.db_persistence import commit_sqlite_volume
+from backend import supabase_db
+
+log = logging.getLogger("misconception_tutor.backend_code")
 
 # ==============================================================================
 # SECTION 1: EXACT RATIONAL ARITHMETIC & INPUT PARSER
@@ -652,13 +656,14 @@ def _seed_demo_data_if_empty(conn: sqlite3.Connection) -> None:
 def save_tutor_session(
     learner_id: str,
     question: str,
-    subject: str,
-    misconception: Optional[str],
-    result: Any,
+    subject: str = "Mathematics",
+    misconception: Optional[str] = None,
+    result: Any = None,
     session_id: Optional[str] = None,
     db_path: Optional[str] = None,
+    auth_token: Optional[str] = None,
 ) -> str:
-    """Persists a full tutor session with 4-agent cognitive outputs."""
+    """Persists a full tutor session with 4-agent cognitive outputs, syncing to Supabase."""
     init_db(db_path)
     sid = session_id or f"sess_{uuid.uuid4().hex[:12]}"
     res_str = json.dumps(result) if not isinstance(result, str) else result
@@ -670,6 +675,20 @@ def save_tutor_session(
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (sid, learner_id, question, subject, misconception or "General Concept Inquiry", res_str, now))
     conn.close()
+
+    # Sync to Supabase cloud database
+    try:
+        supabase_db.sync_tutor_session({
+            "id": sid,
+            "learner_id": learner_id,
+            "question": question,
+            "subject": subject,
+            "misconception": misconception,
+            "result": result if not isinstance(result, str) else {"text": result},
+        }, auth_token=auth_token)
+    except Exception as exc:
+        log.debug("Supabase sync_tutor_session non-fatal error: %s", exc)
+
     return sid
 
 
@@ -679,8 +698,21 @@ def get_tutor_sessions(
     subject: Optional[str] = None,
     search: Optional[str] = None,
     db_path: Optional[str] = None,
+    auth_token: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """Returns past study sessions for the learner with optional filtering."""
+    """Returns past study sessions for the learner with optional filtering, checking Supabase first."""
+    # Attempt to query Supabase cloud if authenticated
+    if auth_token or (learner_id and learner_id != "student_demo"):
+        cloud_sessions = supabase_db.fetch_tutor_sessions(
+            learner_id=learner_id,
+            limit=limit,
+            subject=subject,
+            search=search,
+            auth_token=auth_token,
+        )
+        if cloud_sessions:
+            return cloud_sessions
+
     init_db(db_path)
     conn = get_connection(db_path)
     cur = conn.cursor()
@@ -715,8 +747,17 @@ def get_tutor_sessions(
     ]
 
 
-def get_tutor_session_by_id(session_id: str, db_path: Optional[str] = None) -> Optional[Dict[str, Any]]:
-    """Returns the full session state including parsed result_json."""
+def get_tutor_session_by_id(
+    session_id: str,
+    db_path: Optional[str] = None,
+    auth_token: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Returns the full session state including parsed result_json, checking Supabase first."""
+    if auth_token or supabase_db.is_configured():
+        cloud_sess = supabase_db.fetch_tutor_session_by_id(session_id, auth_token=auth_token)
+        if cloud_sess:
+            return cloud_sess
+
     init_db(db_path)
     conn = get_connection(db_path)
     cur = conn.cursor()
@@ -740,8 +781,18 @@ def get_tutor_session_by_id(session_id: str, db_path: Optional[str] = None) -> O
     }
 
 
-def delete_tutor_session(session_id: str, learner_id: Optional[str] = None, db_path: Optional[str] = None) -> bool:
-    """Deletes a study session from library."""
+def delete_tutor_session(
+    session_id: str,
+    learner_id: Optional[str] = None,
+    db_path: Optional[str] = None,
+    auth_token: Optional[str] = None,
+) -> bool:
+    """Deletes a study session from library, syncing deletion to Supabase."""
+    try:
+        supabase_db.delete_tutor_session(session_id, learner_id=learner_id, auth_token=auth_token)
+    except Exception as exc:
+        log.debug("Supabase delete_tutor_session non-fatal error: %s", exc)
+
     init_db(db_path)
     conn = get_connection(db_path)
     with conn:
@@ -753,7 +804,11 @@ def delete_tutor_session(session_id: str, learner_id: Optional[str] = None, db_p
     return True
 
 
-def get_learner_dashboard_data(learner_id: str, db_path: Optional[str] = None) -> Dict[str, Any]:
+def get_learner_dashboard_data(
+    learner_id: str,
+    db_path: Optional[str] = None,
+    auth_token: Optional[str] = None,
+) -> Dict[str, Any]:
     """Computes comprehensive learning analytics, weekly progress, BKT mastery, and streak."""
     from backend.security.sanitizer import sanitize_learner_id
     safe_learner_id = sanitize_learner_id(learner_id)
@@ -772,10 +827,12 @@ def get_learner_dashboard_data(learner_id: str, db_path: Optional[str] = None) -
     correct_practice = prac_row["correct"] if prac_row and prac_row["correct"] else 0
     accuracy = round((correct_practice / total_practice * 100), 1) if total_practice > 0 else 84.0
 
-    # Concept masteries from BKT
-    cur.execute("SELECT misc_id, p_mastery FROM bkt_states WHERE learner_id = ? OR learner_id = 'student_demo'", (safe_learner_id,))
-    bkt_rows = cur.fetchall()
-    mastery_dict = {r["misc_id"]: float(r["p_mastery"]) for r in bkt_rows}
+    # Concept masteries from BKT (checks Supabase first, falls back to SQLite)
+    mastery_dict = get_bkt_masteries(safe_learner_id, db_path=db_path, auth_token=auth_token)
+    if not mastery_dict:
+        cur.execute("SELECT misc_id, p_mastery FROM bkt_states WHERE learner_id = ? OR learner_id = 'student_demo'", (safe_learner_id,))
+        bkt_rows = cur.fetchall()
+        mastery_dict = {r["misc_id"]: float(r["p_mastery"]) for r in bkt_rows}
 
     # Standard curriculum concepts display
     core_concepts = [
@@ -866,8 +923,17 @@ def get_learner_dashboard_data(learner_id: str, db_path: Optional[str] = None) -
     }
 
 
-def get_learner_notifications(learner_id: str, db_path: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Returns notifications for the learner."""
+def get_learner_notifications(
+    learner_id: str,
+    db_path: Optional[str] = None,
+    auth_token: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Returns notifications for the learner, checking Supabase first."""
+    if auth_token or (learner_id and learner_id != "student_demo"):
+        cloud_notifs = supabase_db.fetch_learner_notifications(learner_id, auth_token=auth_token)
+        if cloud_notifs:
+            return cloud_notifs
+
     init_db(db_path)
     conn = get_connection(db_path)
     cur = conn.cursor()
@@ -894,8 +960,18 @@ def get_learner_notifications(learner_id: str, db_path: Optional[str] = None) ->
     ]
 
 
-def mark_notification_as_read(notif_id: str, db_path: Optional[str] = None) -> bool:
-    """Marks a single or all notifications as read."""
+def mark_notification_as_read(
+    notif_id: str,
+    db_path: Optional[str] = None,
+    learner_id: Optional[str] = None,
+    auth_token: Optional[str] = None,
+) -> bool:
+    """Marks a single or all notifications as read, syncing to Supabase."""
+    try:
+        supabase_db.mark_notification_read(notif_id, learner_id=learner_id, auth_token=auth_token)
+    except Exception as exc:
+        log.debug("Supabase mark_notification_read non-fatal error: %s", exc)
+
     init_db(db_path)
     conn = get_connection(db_path)
     with conn:
@@ -918,6 +994,7 @@ def log_attempt_db(
     confidence: float,
     db_path: Optional[str] = None,
     ts: Optional[str] = None,
+    auth_token: Optional[str] = None,
 ) -> None:
     """Logs student attempt and updates incremental BKT mastery in O(1) time."""
     init_db(db_path)
@@ -935,14 +1012,21 @@ def log_attempt_db(
         ))
 
         if target_misc:
-            _update_bkt_incremental(conn, learner_id, target_misc, bool(correct), timestamp)
+            _update_bkt_incremental(conn, learner_id, target_misc, bool(correct), timestamp, auth_token=auth_token)
     conn.execute("PRAGMA wal_checkpoint(FULL)")
     conn.close()
     commit_sqlite_volume()
 
 
-def _update_bkt_incremental(conn: sqlite3.Connection, learner_id: str, misc_id: str, is_correct: bool, ts: str):
-    """Incremental O(1) Bayesian Knowledge Tracing update (Corbett & Anderson 1995)."""
+def _update_bkt_incremental(
+    conn: sqlite3.Connection,
+    learner_id: str,
+    misc_id: str,
+    is_correct: bool,
+    ts: str,
+    auth_token: Optional[str] = None,
+):
+    """Incremental O(1) Bayesian Knowledge Tracing update (Corbett & Anderson 1995), syncing to Supabase."""
     cur = conn.cursor()
     cur.execute("SELECT p_mastery FROM bkt_states WHERE learner_id = ? AND misc_id = ?", (learner_id, misc_id))
     row = cur.fetchone()
@@ -971,9 +1055,24 @@ def _update_bkt_incremental(conn: sqlite3.Connection, learner_id: str, misc_id: 
             last_updated = excluded.last_updated;
     """, (learner_id, misc_id, p_next, ts))
 
+    # Sync to Supabase cloud
+    try:
+        supabase_db.sync_bkt_state(learner_id, misc_id, p_next, last_updated=ts, auth_token=auth_token)
+    except Exception as exc:
+        log.debug("Supabase sync_bkt_state non-fatal error: %s", exc)
 
-def get_bkt_masteries(learner_id: str, db_path: Optional[str] = None) -> Dict[str, float]:
-    """Returns latest latent concept masteries."""
+
+def get_bkt_masteries(
+    learner_id: str,
+    db_path: Optional[str] = None,
+    auth_token: Optional[str] = None,
+) -> Dict[str, float]:
+    """Returns latest latent concept masteries, checking Supabase first."""
+    if auth_token or (learner_id and learner_id != "student_demo"):
+        cloud_masteries = supabase_db.fetch_bkt_masteries(learner_id, auth_token=auth_token)
+        if cloud_masteries:
+            return cloud_masteries
+
     init_db(db_path)
     conn = get_connection(db_path)
     cur = conn.cursor()
@@ -991,9 +1090,12 @@ def log_practice_attempt(
     misconception: str,
     correct: bool,
     db_path: Optional[str] = None,
+    auth_token: Optional[str] = None,
+    answer: Optional[str] = None,
 ) -> None:
-    """Persist targeted-practice outcomes for longitudinal progress evidence."""
+    """Persist targeted-practice outcomes for longitudinal progress evidence, syncing to Supabase."""
     init_db(db_path)
+    now_ts = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
     conn = get_connection(db_path)
     with conn:
         conn.execute(
@@ -1005,7 +1107,7 @@ def log_practice_attempt(
             (
                 learner_id,
                 session_id,
-                datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
+                now_ts,
                 practice_id,
                 subject,
                 misconception,
@@ -1015,6 +1117,20 @@ def log_practice_attempt(
     conn.execute("PRAGMA wal_checkpoint(FULL)")
     conn.close()
     commit_sqlite_volume()
+
+    # Sync to Supabase cloud
+    try:
+        supabase_db.sync_practice_attempt({
+            "learner_id": learner_id,
+            "session_id": session_id,
+            "practice_id": practice_id,
+            "subject": subject,
+            "misconception": misconception,
+            "correct": correct,
+            "answer": answer or "",
+        }, auth_token=auth_token)
+    except Exception as exc:
+        log.debug("Supabase sync_practice_attempt non-fatal error: %s", exc)
 
 
 def get_practice_progress(learner_id: str, db_path: Optional[str] = None) -> Dict[str, Any]:
