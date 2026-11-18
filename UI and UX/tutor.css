@@ -1205,3 +1205,37 @@
   color: #365314;
   line-height: 1.5;
 }
+
+/* Indic Multilingual Language Selector */
+.lang-selector-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 9999px;
+  padding: 4px 10px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  font-family: 'Manrope', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 13px;
+  transition: all 0.2s ease;
+}
+
+.lang-selector-pill:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.06);
+}
+
+.lang-icon {
+  font-size: 14px;
+}
+
+#teaching-lang-select {
+  border: none;
+  background: transparent;
+  font: 600 12.5px/1.2 'Manrope', sans-serif;
+  color: #1e293b;
+  outline: none;
+  cursor: pointer;
+  padding-right: 4px;
+}

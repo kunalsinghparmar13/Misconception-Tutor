@@ -623,7 +623,13 @@
       const response = await apiFetch('/api/tutor/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: finalQuestion, subject, mode: 'diagnostic', learner_id: learnerId() }),
+        body: JSON.stringify({
+          question: finalQuestion,
+          subject,
+          mode: 'diagnostic',
+          learner_id: learnerId(),
+          language: getTeachingLanguage(),
+        }),
         signal: currentController.signal,
       });
       if (!response.ok) {
@@ -1557,6 +1563,23 @@
     card.appendChild(feedbackBox);
 
     results.appendChild(card);
+  }
+
+  // 9) Indic Multilingual Language Selector
+  function getTeachingLanguage() {
+    const sel = document.getElementById('teaching-lang-select');
+    return (sel && sel.value) ? sel.value : 'en';
+  }
+
+  const langSel = document.getElementById('teaching-lang-select');
+  if (langSel) {
+    const saved = localStorage.getItem('sikora_teaching_lang');
+    if (saved) langSel.value = saved;
+    langSel.addEventListener('change', () => {
+      localStorage.setItem('sikora_teaching_lang', langSel.value);
+      const label = langSel.options[langSel.selectedIndex] ? langSel.options[langSel.selectedIndex].text : langSel.value;
+      showToast(`🌐 Teaching language: ${label}`);
+    });
   }
 
   // ---------------------------------------------------------------- wiring

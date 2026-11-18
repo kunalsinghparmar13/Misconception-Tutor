@@ -21,7 +21,7 @@ from typing import Any, Dict, Optional, Tuple
 
 from flask import Flask, Response, g, jsonify, request, send_from_directory, stream_with_context
 
-from backend import auth, backend_code, gamification, training_store
+from backend import auth, backend_code, gamification, training_store, indic_tutor
 from backend.llm_engine import llm_engine
 from backend.security.guard import prompt_guard
 from backend.security.sanitizer import (
@@ -546,6 +546,15 @@ def mark_notifications_route():
     return jsonify({"success": True})
 
 
+@app.get("/api/indic/languages")
+def get_indic_languages_route():
+    """Returns catalog of supported Indic languages and scripts."""
+    return jsonify({
+        "languages": indic_tutor.INDIC_LANGUAGES,
+        "default": "en",
+    })
+
+
 # ==============================================================================
 # SECTION 5C: GAMIFICATION (XP, LEVELS, STREAKS, DAILY CHALLENGES & EXPLAIN-IT-BACK)
 # ==============================================================================
@@ -966,6 +975,7 @@ def _prepare_tutor_request(body: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any
         "mode": sanitize_input_text(str(body.get("mode", "diagnostic")), max_length=64),
         "learner_id": sanitize_input_text(str(body.get("learner_id", "student_demo")), max_length=64) or "student_demo",
         "practice_count": practice_count,
+        "language": sanitize_input_text(str(body.get("language", "en")), max_length=16).lower() or "en",
     }, None
 
 
@@ -999,6 +1009,12 @@ def llm_answer():
             misconception = classify_misconception(subject, question, metadata)
             result["misconception"] = misconception
             result["practice_set"] = result.get("practice_set") or generate_practice_set(subject, misconception, count=6)
+        
+        # Localize Socratic response into requested Indic language
+        lang = prepared.get("language", "en")
+        if lang and lang != "en":
+            result = indic_tutor.localize_tutor_response(result, lang)
+
         return jsonify(result)
     except Exception:
         app.logger.exception("llm_answer failed")
@@ -1032,7 +1048,15 @@ def tutor_agents_stream():
                 prepared["subject"], prepared["question"], prepared["mode"], prepared["learner_id"],
                 practice_count=prepared["practice_count"],
             ):
-                if event.get("event") == "complete" and isinstance(event.get("result"), dict):
+                lang = prepared.get("language", "en")
+                if event.get("event") == "agent_result" and event.get("agent") == "explainer" and isinstance(event.get("result"), dict) and lang != "en":
+                    dummy = {"misconception": event["result"].get("misconception") or prepared["question"], "answer": event["result"].get("explanation", "")}
+                    loc = indic_tutor.localize_tutor_response(dummy, lang)
+                    if loc.get("localized"):
+                        event["result"]["explanation"] = loc["answer"]
+                elif event.get("event") == "complete" and isinstance(event.get("result"), dict):
+                    if lang and lang != "en":
+                        event["result"] = indic_tutor.localize_tutor_response(event["result"], lang)
                     # Keep approved answers to continue fine-tuning the model on learners' questions.
                     example_id = training_store.save_example(
                         user_id, prepared["subject"], prepared["question"], event["result"])
