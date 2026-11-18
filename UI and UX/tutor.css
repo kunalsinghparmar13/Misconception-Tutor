@@ -849,3 +849,359 @@
   }
 }
 
+
+/* ==========================================================================
+   Gamification Styles: XP, Levels, Streaks, Daily Challenge, Explain-It-Back
+   ========================================================================== */
+
+/* Topbar XP & Streak Pills */
+.top-gamification {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.top-streak-pill {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: #fff8eb;
+  border: 1px solid #fed7aa;
+  color: #9a3412;
+  border-radius: 999px;
+  padding: 4px 11px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: default;
+  transition: transform 0.2s;
+}
+
+.top-streak-pill:hover {
+  transform: scale(1.03);
+}
+
+.flame-icon {
+  font-size: 14px;
+  display: inline-block;
+  animation: flamePulse 1.8s ease-in-out infinite;
+}
+
+@keyframes flamePulse {
+  0%, 100% { transform: scale(1); filter: drop-shadow(0 0 1px #f97316); }
+  50% { transform: scale(1.2) rotate(-3deg); filter: drop-shadow(0 0 4px #ea580c); }
+}
+
+.freeze-tag {
+  font-size: 10px;
+  background: #e0f2fe;
+  color: #0369a1;
+  padding: 1px 6px;
+  border-radius: 8px;
+  border: 1px solid #bae6fd;
+}
+
+.top-xp-pill {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  color: #166534;
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.top-xp-pill:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(34, 197, 94, 0.15);
+}
+
+.xp-badge {
+  background: #22c55e;
+  color: #fff;
+  font-size: 9.5px;
+  font-weight: 800;
+  padding: 1px 6px;
+  border-radius: 6px;
+  letter-spacing: 0.5px;
+}
+
+.xp-title {
+  color: #15803d;
+  font-weight: 600;
+}
+
+.xp-mini-meter {
+  width: 48px;
+  height: 6px;
+  background: #dcfce7;
+  border-radius: 3px;
+  overflow: hidden;
+  position: relative;
+}
+
+.xp-mini-meter i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #4ade80, #16a34a);
+  border-radius: 3px;
+  transition: width 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.xp-num {
+  font-family: 'DM Mono', monospace;
+  font-size: 10.5px;
+  color: #14532d;
+}
+
+/* Floating XP Toast */
+.xp-toast {
+  position: fixed;
+  bottom: 90px;
+  right: 24px;
+  background: #14532d;
+  color: #f0fdf4;
+  border: 1px solid #4ade80;
+  padding: 10px 18px;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(20, 83, 45, 0.25);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  z-index: 100;
+  animation: toastPop 0.4s cubic-bezier(0.3, 1.5, 0.4, 1) both;
+}
+
+@keyframes toastPop {
+  0% { opacity: 0; transform: translateY(20px) scale(0.9); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Daily Challenge Card in Right Panel */
+.daily-challenge-card {
+  background: linear-gradient(145deg, #fdfbf7, #f7f9f2);
+  border: 1px solid #e2e8d0;
+  border-radius: 16px;
+  padding: 16px;
+  margin-bottom: 16px;
+  position: relative;
+  overflow: hidden;
+}
+
+.daily-challenge-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, #f59e0b, #eab308, #84cc16);
+}
+
+.daily-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.daily-tag {
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.8px;
+  color: #b45309;
+  background: #fef3c7;
+  padding: 2px 8px;
+  border-radius: 6px;
+  text-transform: uppercase;
+}
+
+.daily-xp-reward {
+  font-size: 11px;
+  font-weight: 700;
+  color: #15803d;
+  background: #dcfce7;
+  padding: 2px 7px;
+  border-radius: 6px;
+}
+
+.daily-prompt {
+  font-size: 13px;
+  color: #1f2937;
+  margin: 6px 0 12px;
+  line-height: 1.45;
+  font-weight: 500;
+}
+
+.daily-input-row {
+  display: flex;
+  gap: 6px;
+}
+
+.daily-input {
+  flex: 1;
+  padding: 7px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 12px;
+  background: #ffffff;
+  font-family: inherit;
+}
+
+.daily-input:focus {
+  outline: none;
+  border-color: #84cc16;
+  box-shadow: 0 0 0 2px rgba(132, 204, 22, 0.15);
+}
+
+.daily-btn {
+  padding: 7px 13px;
+  background: #789b35;
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.daily-btn:hover {
+  background: #628026;
+}
+
+.daily-completed-banner {
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  color: #065f46;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Explain It Back Active Recall Card */
+.explain-back-card {
+  background: #fdfefe;
+  border: 1.5px solid #d9f99d;
+  border-radius: 16px;
+  padding: 20px;
+  margin-top: 20px;
+  box-shadow: 0 4px 16px rgba(101, 163, 13, 0.08);
+  position: relative;
+}
+
+.explain-back-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.explain-back-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #365314;
+}
+
+.explain-xp-pill {
+  font-size: 11px;
+  font-weight: 700;
+  background: #fef08a;
+  color: #854d0e;
+  padding: 3px 8px;
+  border-radius: 999px;
+}
+
+.explain-back-prompt {
+  font-size: 13px;
+  color: #4b5563;
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+
+.explain-back-textarea {
+  width: 100%;
+  min-height: 80px;
+  padding: 10px 12px;
+  border: 1.5px solid #e5e7eb;
+  border-radius: 10px;
+  font-size: 13px;
+  font-family: inherit;
+  resize: vertical;
+  background: #ffffff;
+  transition: border-color 0.2s;
+  box-sizing: border-box;
+}
+
+.explain-back-textarea:focus {
+  outline: none;
+  border-color: #65a30d;
+  box-shadow: 0 0 0 3px rgba(101, 163, 13, 0.12);
+}
+
+.explain-back-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
+.explain-submit-btn {
+  background: #4d7c0f;
+  color: #ffffff;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 9px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+}
+
+.explain-submit-btn:hover {
+  background: #3f6212;
+  transform: translateY(-1px);
+}
+
+.explain-feedback-box {
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: 12px;
+  background: #f7fee7;
+  border: 1px solid #bef264;
+}
+
+.stars-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 18px;
+  margin-bottom: 6px;
+}
+
+.star-filled {
+  color: #eab308;
+  filter: drop-shadow(0 1px 2px rgba(234, 179, 8, 0.3));
+}
+
+.star-empty {
+  color: #d1d5db;
+}
+
+.explain-feedback-text {
+  font-size: 13px;
+  color: #365314;
+  line-height: 1.5;
+}

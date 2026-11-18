@@ -34,6 +34,7 @@ from typing import Dict, List, Tuple, Optional, Any, Callable
 import logging
 from backend.db_persistence import commit_sqlite_volume
 from backend import supabase_db
+from backend import gamification
 
 log = logging.getLogger("misconception_tutor.backend_code")
 
@@ -521,6 +522,9 @@ def init_db(db_path: Optional[str] = None) -> None:
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_notifs_learner ON learner_notifications(learner_id, created_at DESC);")
 
+        # Gamification tables (XP, Streaks, Daily Challenges, Explain-It-Back)
+        gamification.init_gamification_tables(conn)
+
         _seed_demo_data_if_empty(conn)
     conn.execute("PRAGMA wal_checkpoint(FULL)")
     conn.close()
@@ -675,6 +679,17 @@ def save_tutor_session(
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (sid, learner_id, question, subject, misconception or "General Concept Inquiry", res_str, now))
     conn.close()
+
+    # Award XP for asking a question and record active day for streak
+    try:
+        gam_conn = get_connection(db_path)
+        gam_conn.row_factory = sqlite3.Row
+        gamification.award_xp(gam_conn, learner_id, "ask_question", detail=question[:60])
+        gamification.record_active_day(gam_conn, learner_id)
+        gam_conn.commit()
+        gam_conn.close()
+    except Exception as exc:
+        log.debug("Gamification award_xp non-fatal error: %s", exc)
 
     # Sync to Supabase cloud database
     try:
@@ -895,6 +910,21 @@ def get_learner_dashboard_data(
     ]
 
     conn.close()
+
+    # Gamification data: XP, level, streak, daily challenge
+    gam_conn = get_connection(db_path)
+    gam_conn.row_factory = sqlite3.Row
+    xp_profile = gamification.get_xp_profile(gam_conn, safe_learner_id)
+    streak_data = gamification.get_streak(gam_conn, safe_learner_id)
+    daily = gamification.get_or_create_daily_challenge(
+        gam_conn, safe_learner_id,
+        generate_problem_fn=generate_targeted_problem,
+        get_masteries_fn=lambda lid: get_bkt_masteries(lid, db_path=db_path),
+        all_bugs=ALL_BUGS,
+    )
+    gam_conn.commit()
+    gam_conn.close()
+
     return {
         "weekly_goal": {
             "completed": completed_this_week,
@@ -904,11 +934,17 @@ def get_learner_dashboard_data(
             "note": f"{weekly_target - completed_this_week} more sessions to hit your goal." if completed_this_week < weekly_target else "Weekly goal completed! Great work!"
         },
         "streak": {
-            "current_streak_days": 4,
-            "days_active_this_week": 4,
-            "week_days": days,
+            "current_streak_days": streak_data.get("current_streak", 0),
+            "longest_streak": streak_data.get("longest_streak", 0),
+            "days_active_this_week": streak_data.get("total_active_days", 0),
+            "week_days": streak_data.get("week_days", days),
+            "freezes_available": streak_data.get("freezes_available", 1),
+            "flame_size": streak_data.get("flame_size", "small"),
+            "milestones": streak_data.get("milestones", []),
         },
-        "streak_days": 4,
+        "streak_days": streak_data.get("current_streak", 0),
+        "xp": xp_profile,
+        "daily_challenge": daily,
         "overall_accuracy": round(accuracy / 100, 2),
         "slips_diagnosed": 6,
         "stats": {
@@ -1117,6 +1153,18 @@ def log_practice_attempt(
     conn.execute("PRAGMA wal_checkpoint(FULL)")
     conn.close()
     commit_sqlite_volume()
+
+    # Award XP for practice attempt
+    try:
+        gam_conn = get_connection(db_path)
+        gam_conn.row_factory = sqlite3.Row
+        action = "practice_correct" if correct else "practice_incorrect"
+        gamification.award_xp(gam_conn, learner_id, action, is_correct=correct, detail=f"{misconception}:{practice_id}")
+        gamification.record_active_day(gam_conn, learner_id)
+        gam_conn.commit()
+        gam_conn.close()
+    except Exception as exc:
+        log.debug("Gamification practice XP non-fatal error: %s", exc)
 
     # Sync to Supabase cloud
     try:

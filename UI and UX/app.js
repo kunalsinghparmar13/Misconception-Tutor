@@ -488,6 +488,10 @@
           });
         }
         if (onRound && payload.round) onRound(payload.round);
+        if (payload.correct) {
+          showXpToast(15, 'Practice Correct! +15 XP ⭐');
+        }
+        loadGamificationProfile();
       } catch (error) {
         verdict.textContent = `Could not grade: ${error.message}`;
         verdict.className = 't-bad';
@@ -678,6 +682,8 @@
         }
         setHint('Done · Ask a follow-up or try the practice problems');
         loadProgress(true);
+        loadGamificationProfile();
+        renderExplainBackCard(r.misconception || 'Diagnosed concept', subject, currentSessionId);
       }
     } catch (error) {
       if (error.name !== 'AbortError') {
@@ -1359,6 +1365,200 @@
     });
   }
 
+  // 8) Gamification Engine: XP, Levels, Streaks, Daily Challenge, Explain-It-Back
+  let currentDailyProblem = null;
+
+  function showXpToast(amount, message) {
+    const toast = el('div', 'xp-toast', `⚡ +${amount} XP · ${message}`);
+    document.body.appendChild(toast);
+    setTimeout(() => {
+      toast.style.transition = 'opacity 0.4s ease, transform 0.4s ease';
+      toast.style.opacity = '0';
+      toast.style.transform = 'translateY(12px)';
+      setTimeout(() => toast.remove(), 400);
+    }, 3200);
+  }
+
+  async function loadGamificationProfile() {
+    try {
+      const res = await apiFetch(`/api/gamification/profile?learner_id=${encodeURIComponent(learnerId())}`);
+      const data = await res.json();
+      if (!data) return;
+
+      // 1. Streak & Flame
+      const streak = data.streak || {};
+      const streakCountEl = document.getElementById('top-streak-count');
+      const freezeCountEl = document.getElementById('top-freeze-count');
+      if (streakCountEl) streakCountEl.textContent = streak.current_streak || 0;
+      if (freezeCountEl) freezeCountEl.textContent = `❄️ ${streak.freezes_available || 1} Freeze`;
+
+      // 2. XP & Level
+      const xp = data.xp || {};
+      const lvlBadge = document.getElementById('top-level-badge');
+      const lvlTitle = document.getElementById('top-level-title');
+      const xpMeter = document.getElementById('top-xp-meter');
+      const xpNum = document.getElementById('top-xp-num');
+      if (lvlBadge) lvlBadge.textContent = `Lv ${xp.level || 1}`;
+      if (lvlTitle) lvlTitle.textContent = xp.title || 'Curious Beginner';
+      if (xpMeter) xpMeter.style.width = `${xp.progress_percent || 20}%`;
+      if (xpNum) xpNum.textContent = `${xp.total_xp || 0} XP`;
+
+      // 3. Daily Challenge
+      const daily = data.daily_challenge || {};
+      currentDailyProblem = daily.problem || null;
+      const dailyPromptEl = document.getElementById('daily-challenge-prompt');
+      const dailyForm = document.getElementById('daily-challenge-form');
+      const dailyDone = document.getElementById('daily-challenge-done');
+
+      if (daily.completed) {
+        if (dailyForm) dailyForm.hidden = true;
+        if (dailyDone) dailyDone.hidden = false;
+        if (dailyPromptEl && currentDailyProblem) {
+          dailyPromptEl.textContent = `${currentDailyProblem.text || 'Daily problem solved!'} (Solved)`;
+        }
+      } else {
+        if (dailyForm) dailyForm.hidden = false;
+        if (dailyDone) dailyDone.hidden = true;
+        if (dailyPromptEl) {
+          dailyPromptEl.textContent = (currentDailyProblem && currentDailyProblem.text) ? currentDailyProblem.text : 'Solve: 1/3 + 1/4 = ?';
+        }
+      }
+    } catch (e) {
+      console.warn('Could not load gamification profile:', e);
+    }
+  }
+
+  // Daily Challenge submission
+  const dailySubmitBtn = document.getElementById('daily-challenge-submit-btn');
+  if (dailySubmitBtn) {
+    dailySubmitBtn.addEventListener('click', async () => {
+      const input = document.getElementById('daily-challenge-input');
+      const answer = input ? input.value.trim() : '';
+      if (!answer) return;
+
+      const expected = (currentDailyProblem && currentDailyProblem.correct_answer) ? currentDailyProblem.correct_answer : '7/12';
+      const targetMisc = (currentDailyProblem && currentDailyProblem.target_misc) ? currentDailyProblem.target_misc : 'M1_add_across';
+
+      try {
+        dailySubmitBtn.disabled = true;
+        dailySubmitBtn.textContent = 'Checking…';
+        const res = await apiFetch('/api/daily-challenge/submit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            learner_id: learnerId(),
+            answer,
+            expected_answer: expected,
+            target_misc: targetMisc,
+          })
+        });
+        const data = await res.json();
+        if (data.correct) {
+          showXpToast(data.xp_earned || 30, 'Daily Challenge Complete! 🔥');
+          const dailyForm = document.getElementById('daily-challenge-form');
+          const dailyDone = document.getElementById('daily-challenge-done');
+          if (dailyForm) dailyForm.hidden = true;
+          if (dailyDone) dailyDone.hidden = false;
+        } else {
+          showToast(`Not quite (${expected} expected). Challenge logged for practice!`);
+        }
+        loadGamificationProfile();
+      } catch (err) {
+        showToast('Could not submit daily challenge.');
+      } finally {
+        dailySubmitBtn.disabled = false;
+        dailySubmitBtn.textContent = 'Submit';
+      }
+    });
+  }
+
+  // Explain It Back Active Recall Card
+  function renderExplainBackCard(misconception, subject, sessionId) {
+    let existing = document.getElementById('explain-back-card');
+    if (existing) existing.remove();
+
+    const card = el('div', 'explain-back-card');
+    card.id = 'explain-back-card';
+
+    const head = el('div', 'explain-back-head');
+    const title = el('div', 'explain-back-title', '🎯 Explain It Back · Active Recall');
+    const xpPill = el('span', 'explain-xp-pill', 'Earn up to +70 XP & ⭐⭐⭐');
+    head.appendChild(title);
+    head.appendChild(xpPill);
+
+    const prompt = el('p', 'explain-back-prompt',
+      `In your own words, why does the slip in "${misconception || 'this concept'}" occur, and what is the exact rule to solve it correctly?`
+    );
+
+    const textarea = el('textarea', 'explain-back-textarea');
+    textarea.placeholder = 'Explain like you are teaching a friend… (e.g. why denominators must match, or what the base case stops)';
+
+    const actions = el('div', 'explain-back-actions');
+    const btn = el('button', 'explain-submit-btn', 'Submit My Explanation');
+    actions.appendChild(btn);
+
+    const feedbackBox = el('div', 'explain-feedback-box');
+    feedbackBox.hidden = true;
+
+    btn.addEventListener('click', async () => {
+      const text = textarea.value.trim();
+      if (!text || text.length < 5) {
+        showToast('Please write a bit more to explain the concept.');
+        return;
+      }
+      try {
+        btn.disabled = true;
+        btn.textContent = 'Grading explanation…';
+        const res = await apiFetch('/api/explain-back', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            learner_id: learnerId(),
+            misconception,
+            explanation: text,
+            subject,
+            session_id: sessionId,
+          })
+        });
+        const data = await res.json();
+        feedbackBox.replaceChildren();
+
+        // Stars row
+        const starsRow = el('div', 'stars-row');
+        const numStars = data.stars || 1;
+        for (let i = 1; i <= 3; i++) {
+          const star = el('span', i <= numStars ? 'star-filled' : 'star-empty', '★');
+          starsRow.appendChild(star);
+        }
+        const scoreLabel = el('strong', '', ` ${numStars} of 3 Stars · +${data.xp_earned || 20} XP Earned!`);
+        starsRow.appendChild(scoreLabel);
+        feedbackBox.appendChild(starsRow);
+
+        const feedbackText = el('p', 'explain-feedback-text', data.feedback || 'Great effort explaining the concept.');
+        feedbackBox.appendChild(feedbackText);
+
+        feedbackBox.hidden = false;
+        btn.hidden = true;
+        textarea.disabled = true;
+
+        showXpToast(data.xp_earned || 20, `${numStars}-Star Active Recall! ⭐`);
+        loadGamificationProfile();
+      } catch (err) {
+        showToast('Could not grade explanation.');
+        btn.disabled = false;
+        btn.textContent = 'Submit My Explanation';
+      }
+    });
+
+    card.appendChild(head);
+    card.appendChild(prompt);
+    card.appendChild(textarea);
+    card.appendChild(actions);
+    card.appendChild(feedbackBox);
+
+    results.appendChild(card);
+  }
+
   // ---------------------------------------------------------------- wiring
   window.sendPrompt = ask;
   textarea.maxLength = MAX_CHARS;
@@ -1367,6 +1567,7 @@
   loadRecentSessions();
   loadNotifications();
   loadProgress(true);
+  loadGamificationProfile();
   refreshBackendStatus().then(wakeModelEarly);
   setInterval(refreshBackendStatus, 30000);
 })();

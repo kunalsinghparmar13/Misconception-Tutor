@@ -21,7 +21,7 @@ from typing import Any, Dict, Optional, Tuple
 
 from flask import Flask, Response, g, jsonify, request, send_from_directory, stream_with_context
 
-from backend import auth, backend_code, training_store
+from backend import auth, backend_code, gamification, training_store
 from backend.llm_engine import llm_engine
 from backend.security.guard import prompt_guard
 from backend.security.sanitizer import (
@@ -544,6 +544,145 @@ def mark_notifications_route():
     token = _current_auth_token()
     backend_code.mark_notification_as_read(notif_id, learner_id=learner_id, auth_token=token)
     return jsonify({"success": True})
+
+
+# ==============================================================================
+# SECTION 5C: GAMIFICATION (XP, LEVELS, STREAKS, DAILY CHALLENGES & EXPLAIN-IT-BACK)
+# ==============================================================================
+
+@app.get("/api/gamification/profile")
+def get_gamification_profile_route():
+    """Returns XP level, streak, daily challenge status, and recent activity."""
+    learner_id = _current_learner_id()
+    conn = backend_code.get_connection()
+    conn.row_factory = backend_code.sqlite3.Row
+    xp_data = gamification.get_xp_profile(conn, learner_id)
+    streak_data = gamification.get_streak(conn, learner_id)
+    daily = gamification.get_or_create_daily_challenge(
+        conn, learner_id,
+        generate_problem_fn=backend_code.generate_targeted_problem,
+        get_masteries_fn=backend_code.get_bkt_masteries,
+        all_bugs=backend_code.ALL_BUGS,
+    )
+    conn.commit()
+    conn.close()
+    return jsonify({
+        "learner_id": learner_id,
+        "xp": xp_data,
+        "streak": streak_data,
+        "daily_challenge": daily,
+    })
+
+
+@app.get("/api/daily-challenge")
+def get_daily_challenge_route():
+    """Returns today's curated challenge targeting the student's weakest misconception."""
+    learner_id = _current_learner_id()
+    conn = backend_code.get_connection()
+    conn.row_factory = backend_code.sqlite3.Row
+    daily = gamification.get_or_create_daily_challenge(
+        conn, learner_id,
+        generate_problem_fn=backend_code.generate_targeted_problem,
+        get_masteries_fn=backend_code.get_bkt_masteries,
+        all_bugs=backend_code.ALL_BUGS,
+    )
+    conn.commit()
+    conn.close()
+    return jsonify(daily)
+
+
+@app.post("/api/daily-challenge/submit")
+def submit_daily_challenge_route():
+    """Grades today's daily challenge, awards streak credit & +30 XP."""
+    learner_id = _current_learner_id()
+    data = request.get_json(silent=True) or {}
+    raw_answer = str(data.get("answer", "")).strip()
+    expected_answer = str(data.get("expected_answer", "")).strip()
+    target_misc = str(data.get("target_misc", "M1_add_across")).strip()
+
+    if not raw_answer:
+        return jsonify({"error": "Answer is required."}), 400
+
+    user_answer = sanitize_math_answer(raw_answer)
+    correct, _ = backend_code.check_answer(user_answer, expected_answer) if expected_answer else (True, None)
+
+    conn = backend_code.get_connection()
+    conn.row_factory = backend_code.sqlite3.Row
+    result = gamification.complete_daily_challenge(conn, learner_id, correct=correct)
+    conn.commit()
+    conn.close()
+
+    backend_code.log_attempt_db(
+        learner_id=learner_id,
+        session_id="daily_challenge",
+        problem_id=f"daily_{gamification.date.today().isoformat()}",
+        target_misc=target_misc,
+        answer=user_answer,
+        correct=int(correct),
+        predicted_misc=None if correct else target_misc,
+        confidence=1.0 if correct else 0.85,
+    )
+
+    return jsonify({
+        "correct": correct,
+        "expected_answer": expected_answer,
+        **result,
+    })
+
+
+@app.post("/api/explain-back")
+def submit_explain_back_route():
+    """Evaluates student's active-recall explanation of a misconception on a 3-star scale."""
+    learner_id = _current_learner_id()
+    data = request.get_json(silent=True) or {}
+    misconception = sanitize_input_text(str(data.get("misconception", "")).strip(), max_length=200)
+    explanation = sanitize_input_text(str(data.get("explanation", "")).strip(), max_length=4000)
+    subject = sanitize_input_text(str(data.get("subject", "Mathematics")), max_length=50)
+    session_id = sanitize_input_text(str(data.get("session_id", ""))) if data.get("session_id") else None
+
+    if not explanation:
+        return jsonify({"error": "Please write your explanation first."}), 400
+    if not misconception:
+        misconception = "Concept Understanding"
+
+    eval_result = gamification.evaluate_explanation(
+        misconception=misconception,
+        learner_explanation=explanation,
+        subject=subject,
+    )
+
+    conn = backend_code.get_connection()
+    conn.row_factory = backend_code.sqlite3.Row
+    saved = gamification.save_explain_back(
+        conn=conn,
+        learner_id=learner_id,
+        misconception=misconception,
+        learner_explanation=explanation,
+        stars=eval_result["stars"],
+        feedback=eval_result["feedback"],
+        session_id=session_id,
+    )
+    conn.commit()
+    conn.close()
+
+    return jsonify({
+        **eval_result,
+        **saved,
+    })
+
+
+@app.get("/api/explain-back/history")
+def get_explain_back_history_route():
+    """Returns past explain-back reflections and star achievements."""
+    learner_id = _current_learner_id()
+    conn = backend_code.get_connection()
+    conn.row_factory = backend_code.sqlite3.Row
+    history = gamification.get_explain_back_history(conn, learner_id)
+    conn.close()
+    return jsonify({
+        "history": history,
+        "count": len(history),
+    })
 
 
 @app.post("/api/context/upload")
