@@ -72,9 +72,19 @@ source .venv/bin/activate          # On Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
 # 4. Launch the web application
-PYTHONPATH=src:. python3 -m backend.api
+PYTHONPATH=src:.:LLM python3 -m backend.api
 ```
-Open **`http://localhost:8000`** in your browser.
+Open **`http://localhost:8000`** in your browser and create an account on the sign-in page.
+
+On macOS/Linux, steps 2-4 are one command: `./scripts/run_local.sh`.
+
+**To get tutor answers**, the app needs the model server address. Ask the project owner for the two values and save
+them in a file named `.env.kaggle` in the project folder (it is git-ignored, so it is never committed):
+```
+LLM_BACKEND_URL=https://...
+LLM_BACKEND_TOKEN=...
+```
+Without it, the app still runs (sign-in, library, practice, progress) and the header shows the tutor as offline.
 
 ### The four-agent tutor
 

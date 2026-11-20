@@ -19,8 +19,8 @@ if [ -z "${LLM_BACKEND_URL:-}" ] && [ -f .env.kaggle ]; then
 fi
 
 if [ -z "${LLM_BACKEND_URL:-}" ]; then
-  echo "Set LLM_BACKEND_URL (and LLM_BACKEND_TOKEN) to your model server first. See docs/DEPLOY_FREE.md." >&2
-  exit 1
+  echo "Note: no model server set, so the app runs but the tutor cannot answer yet." >&2
+  echo "      Put LLM_BACKEND_URL=... and LLM_BACKEND_TOKEN=... in .env.kaggle (ask the project owner), then restart." >&2
 fi
 
 if [ ! -d .venv ]; then python3 -m venv .venv; fi
