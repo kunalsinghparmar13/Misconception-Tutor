@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en">
-<head>
+<head><script src="/click-sound.js?v=2"></script>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="#f5f3ee">
@@ -8,7 +8,7 @@
 <link rel="icon" type="image/png" href="/favicon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800;900&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <style>
 :root {
   --paper: #f5f3ee; --white: #fffefa; --ink: #1c2823; --muted: #818b83; --line: #e4e4da;
@@ -17,7 +17,7 @@
 * { box-sizing: border-box; }
 html, body { margin: 0; min-height: 100%; }
 body {
-  font: 15px 'DM Sans', sans-serif;
+  font: 15px Archivo, sans-serif;
   color: var(--ink);
   background:
     radial-gradient(900px 520px at 12% 10%, rgba(190, 220, 100, .38), transparent 60%),
@@ -50,8 +50,8 @@ body {
   gap: 22px;
 }
 .intro img { width: 168px; height: auto; background: var(--white); border-radius: 12px; padding: 8px 12px; }
-.eyebrow { font: 500 10px 'DM Mono', monospace; letter-spacing: 1.5px; text-transform: uppercase; color: #b9ccb9; }
-.intro h1 { margin: 0; font: 800 34px/1.08 Manrope, sans-serif; letter-spacing: -1.4px; }
+.eyebrow { font: 500 10px 'Space Mono', monospace; letter-spacing: 1.5px; text-transform: uppercase; color: #b9ccb9; }
+.intro h1 { margin: 0; font: 800 34px/1.08 Archivo, sans-serif; letter-spacing: -1.4px; }
 .intro h1 em { color: var(--green); font-style: normal; }
 .intro p { margin: 0; color: #c8d6c8; line-height: 1.6; }
 .points { list-style: none; margin: auto 0 0; padding: 0; display: grid; gap: 10px; font-size: 13px; color: #dfe9d4; }
@@ -60,16 +60,16 @@ body {
 .panel { padding: 40px 38px; }
 .tabs { display: grid; grid-template-columns: 1fr 1fr; background: #f1f1ea; border-radius: 12px; padding: 4px; margin-bottom: 26px; }
 .tabs button {
-  border: 0; background: none; padding: 10px; border-radius: 9px; font: 600 13px 'DM Sans', sans-serif;
+  border: 0; background: none; padding: 10px; border-radius: 9px; font: 600 13px Archivo, sans-serif;
   color: #657068; cursor: pointer;
 }
 .tabs button[aria-selected="true"] { background: var(--white); color: var(--deep); box-shadow: 0 1px 4px rgba(0, 0, 0, .06); }
-h2 { margin: 0 0 6px; font: 700 22px Manrope, sans-serif; letter-spacing: -.6px; }
+h2 { margin: 0 0 6px; font: 700 22px Archivo, sans-serif; letter-spacing: -.6px; }
 .sub { margin: 0 0 22px; color: var(--muted); font-size: 13px; }
 form { display: grid; gap: 14px; }
-label { display: grid; gap: 6px; font: 500 10px 'DM Mono', monospace; letter-spacing: 1.2px; text-transform: uppercase; color: #7f887f; }
+label { display: grid; gap: 6px; font: 500 10px 'Space Mono', monospace; letter-spacing: 1.2px; text-transform: uppercase; color: #7f887f; }
 input {
-  width: 100%; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; font: 15px 'DM Sans', sans-serif;
+  width: 100%; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; font: 15px Archivo, sans-serif;
   color: var(--ink); background: #fbfbf7; letter-spacing: 0; text-transform: none;
 }
 input:focus { outline: 2px solid var(--green); outline-offset: 1px; background: #fff; }
@@ -77,14 +77,14 @@ input:focus { outline: 2px solid var(--green); outline-offset: 1px; background: 
 .pw input { padding-right: 70px; }
 .pw button {
   position: absolute; right: 8px; top: 50%; transform: translateY(-50%); border: 0; background: none;
-  font: 500 11px 'DM Mono', monospace; color: var(--muted); cursor: pointer; padding: 6px;
+  font: 500 11px 'Space Mono', monospace; color: var(--muted); cursor: pointer; padding: 6px;
 }
 .row { display: flex; justify-content: flex-end; margin-top: -4px; }
-.link { border: 0; background: none; color: #5d7d2a; font: 600 12px 'DM Sans', sans-serif; cursor: pointer; padding: 0; }
+.link { border: 0; background: none; color: #5d7d2a; font: 600 12px Archivo, sans-serif; cursor: pointer; padding: 0; }
 .link:hover { text-decoration: underline; }
 .submit {
   border: 0; border-radius: 12px; padding: 13px; background: var(--deep); color: #fff;
-  font: 700 14px 'DM Sans', sans-serif; cursor: pointer; margin-top: 4px;
+  font: 700 14px Archivo, sans-serif; cursor: pointer; margin-top: 4px;
 }
 .submit:hover { background: #2c5242; }
 .submit:disabled { opacity: .55; cursor: default; }
@@ -102,7 +102,23 @@ input:focus { outline: 2px solid var(--green); outline-offset: 1px; background: 
   .panel { padding: 28px 24px; }
 }
 @media (prefers-reduced-motion: reduce) { .shell { animation: none; } }
+/* Match the notebook workspace. */
+:root {
+  --paper: #f7f1df; --white: #fffaf0; --ink: #22221b; --muted: #575348;
+  --line: #28271f; --green: #b9e5ac; --deep: #253c31; --shadow: 5px 6px #28271f;
+}
+body { background: var(--paper); }
+.shell { border: 2px solid var(--line); }
+.intro { background: #f3ac83; color: var(--ink); border-right: 2px solid var(--line); }
+.intro img { background: transparent; }
+.intro p, .points, .points b, .eyebrow, label, .link { color: var(--deep); }
+.intro h1 em { color: var(--deep); }
+.tabs { background: #eee5ce; }
+input, input:focus { background: var(--white); }
+.submit, .submit:hover { color: var(--ink); background: var(--green); border: 2px solid var(--line); box-shadow: 2px 3px var(--line); }
+.msg.error, .msg.info { background: #eee5ce; color: var(--ink); border: 1px solid var(--line); }
 </style>
+
 </head>
 <body>
 <main class="shell">
@@ -147,6 +163,7 @@ input:focus { outline: 2px solid var(--green); outline-offset: 1px; background: 
     </form>
 
     <p class="privacy" id="privacy">Your questions and the tutor's answers may be used to improve the tutor, without your name or email.</p>
+
     <p class="foot" id="foot">New here? <button type="button" class="link" data-switch="signup">Create an account</button></p>
   </section>
 </main>

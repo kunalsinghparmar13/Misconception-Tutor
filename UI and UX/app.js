@@ -1120,11 +1120,69 @@
   }
 
   // 4) Learning Analytics & Progress Dashboard
+  const graph = document.getElementById('progress-graph');
+  const graphTabs = document.querySelectorAll('[data-progress-graph]');
+  let graphData;
+  let graphMode = 'mastery';
+  let graphStatus = 'Loading progress…';
+
+  function renderProgressGraph() {
+    if (!graph) return;
+    graph.textContent = graphStatus;
+    if (!graphData) return;
+
+    const mastery = graphMode === 'mastery';
+    const bySubject = graphData.bkt_concept_mastery || {};
+    const rows = mastery
+      ? Object.entries(bySubject).flatMap(([subject, concepts]) =>
+          (Array.isArray(concepts) ? concepts : []).map(({ concept, mastery: score }) => ({
+            name: (subject === 'python' ? 'Python' : 'Math') + ' · ' + concept,
+            value: Math.round(score * 100)
+          })))
+      : (graphData.top_misconceptions || []).map(({ title, occurrences }) => ({
+          name: title, value: Number(occurrences)
+        }));
+    const valid = rows.filter(({ name, value }) =>
+      name && Number.isFinite(value) && value >= 0 && (!mastery || value <= 100)
+    ).sort((a, b) => b.value - a.value);
+
+    if (!valid.length) {
+      graph.textContent = mastery ? 'No concept mastery recorded yet.' : 'No recurring mistakes recorded yet.';
+      return;
+    }
+
+    const max = mastery ? 100 : Math.max(1, valid[0].value);
+    const list = el('ul', 'progress-chart');
+    list.dataset.mode = graphMode;
+    valid.forEach(({ name, value }) => {
+      const item = el('li');
+      const caption = el('div', 'progress-chart-caption');
+      caption.append(el('strong', '', name), el('span', '', mastery ? value + '%' : String(value)));
+      const track = el('div', 'progress-chart-track');
+      track.setAttribute('aria-hidden', 'true');
+      const fill = el('span', 'progress-chart-fill');
+      fill.style.width = (value / max * 100) + '%';
+      track.append(fill);
+      item.append(caption, track);
+      list.append(item);
+    });
+    graph.replaceChildren(list);
+  }
+
+  graphTabs.forEach(button => button.addEventListener('click', () => {
+    graphMode = button.dataset.progressGraph;
+    graphTabs.forEach(tab => tab.setAttribute('aria-pressed', String(tab === button)));
+    renderProgressGraph();
+  }));
+
   async function loadProgress(background = false) {
     try {
       const res = await apiFetch(`/api/learner/dashboard?learner_id=${encodeURIComponent(learnerId())}`);
+      if (!res.ok) throw new Error('Progress request failed');
       const data = await res.json();
-      if (!data) return;
+      if (!data) throw new Error('Progress response was empty');
+      graphData = data;
+      renderProgressGraph();
 
       const gGoal = document.getElementById('stat-weekly-goal');
       const gNote = document.getElementById('stat-weekly-note');
@@ -1219,7 +1277,12 @@
           slipsList.appendChild(item);
         });
       }
-    } catch (e) { /* ignore */ }
+    } catch (e) {
+      if (!graphData && graph) {
+        graphStatus = 'Progress data is unavailable right now.';
+        renderProgressGraph();
+      }
+    }
   }
 
   // 5) Notifications Popover

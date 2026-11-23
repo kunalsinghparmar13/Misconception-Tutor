@@ -79,9 +79,15 @@ def require_sign_in():
 # ==============================================================================
 
 @app.get("/")
+@app.get("/index.html")
 def index():
     """Serves the Sikora AI interface (no-cache headers come from add_no_cache_headers)."""
     return send_from_directory(UI_DIR, "index.html")
+
+
+@app.get("/<any('code.html','code.css','code.js','workspace-switch.js','click-sound.js','ui-click.wav','workspace-switch.css','bubu.glb','bubu-portrait.png','pixel-hand.png'):asset>")
+def workspace_asset(asset):
+    return send_from_directory(UI_DIR, asset)
 
 
 @app.get("/login")
@@ -117,6 +123,11 @@ def public_config():
 def app_script():
     """Serves the frontend application controller."""
     return send_from_directory(UI_DIR, "app.js")
+
+
+@app.get("/study-hero.jpg")
+def study_hero():
+    return send_from_directory(UI_DIR, "study-hero.jpg")
 
 
 @app.get("/tutor.css")

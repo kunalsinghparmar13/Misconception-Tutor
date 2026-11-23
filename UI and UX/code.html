@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en"><head><script src="/click-sound.js?v=2"></script><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Humex · Humo</title><link rel="stylesheet" href="workspace-switch.css"><link rel="stylesheet" href="code.css">
+<script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/4.0.0/model-viewer.min.js"></script>
+</head>
+<body><header><workspace-switch current="code"></workspace-switch><b>Humex</b><span>Voice studio</span></header>
+<main><section class="studio" aria-label="Humo avatar"><div class="intro"><p>HUMEX / VOICE STUDIO</p><h1>Talk to <i>Humo.</i></h1></div>
+<div class="portrait"><model-viewer src="bubu.glb" alt="Humo, your 3D conversation partner" camera-controls disable-pan disable-zoom interaction-prompt="none" camera-target="0m 1.39m 0m" camera-orbit="0deg 86deg 1.92m" field-of-view="37deg" exposure="1.15"></model-viewer></div>
+<div class="studio-footer"><span class="indicator">●</span> <span id="state" role="status">Ready to chat</span><button id="sound" aria-pressed="true">Voice on</button></div></section>
+<section class="conversation"><div class="chat-title"><h2>Conversation</h2><select id="lang" aria-label="Conversation language"><option value="en-IN">English</option><option value="hi-IN">हिन्दी</option></select></div>
+<div class="messages" id="messages" role="log" aria-live="polite"><article><b>Humo</b><p>Hey, I’m Humo. Want to try a quick puzzle or talk through a study question?</p></article></div>
+<div class="actions"><button data-start="Give me a quick puzzle">Quick puzzle ↗</button><button data-start="Help me study">Study together ↗</button></div>
+<form><label for="message">Your message</label><textarea id="message" rows="2" maxlength="1600" placeholder="Type here, or use the microphone…"></textarea><div class="controls"><button type="button" id="mic">◉ Microphone</button><button type="submit" id="send">Send ↑</button></div></form>
+<small id="notice" role="status"></small></section></main><script src="workspace-switch.js"></script><script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script><script src="/config.js"></script><script src="auth.js"></script><script src="code.js"></script></body></html>
