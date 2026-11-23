@@ -206,7 +206,7 @@ def test_continuous_trainer_status():
 def test_api_static_routes(client):
     r_index = client.get("/")
     assert r_index.status_code == 200
-    assert b"Make sense of the tricky bits." in r_index.data
+    assert b'id="view-overview"' in r_index.data
     assert b'src="/app.js"' in r_index.data
 
     r_app = client.get("/app.js")
