@@ -1,9 +1,11 @@
 """Party-M-0001 + ActorCore mocap (Idle, Stand Talk) -> party-m.glb for Humex.
-Run: Blender -b --factory-startup --python actorcore_to_glb.py -- <character.fbx> <idle.fbx> <talk.fbx> <out.glb> <preview_prefix>
+Run: Blender -b --factory-startup --python actorcore_to_glb.py -- <character.fbx> <idle.fbx> <talk.fbx> <out.glb> <preview_prefix> [<texture set folder>]
+The optional texture set folder (e.g. "Texture sets/Actor/party-m-0001/02") picks an outfit colour variant.
 """
 import bpy, sys, os, math, random
 args = sys.argv[sys.argv.index("--")+1:]
-char_fbx, idle_fbx, talk_fbx, out, preview = args
+char_fbx, idle_fbx, talk_fbx, out, preview = args[:5]
+outfit = args[5] if len(args) > 5 else None
 random.seed(7)
 bpy.ops.wm.read_factory_settings(use_empty=True)
 scene = bpy.context.scene
@@ -17,8 +19,15 @@ arm.animation_data_clear()
 # Material: connect the roughness/metallic maps the FBX import leaves out, render opaque.
 tex = os.path.join(os.path.dirname(char_fbx), "textures/party-m-0001/party-m-0001/Cesar_D_LaTorre_Jacket/Character")
 mat = bpy.data.materials["Character"]; nt = mat.node_tree; bsdf = nt.nodes["Principled BSDF"]
-for sock, fname in (("Roughness", "Character_roughness.jpg"), ("Metallic", "Character_metallic.jpg")):
-    node = nt.nodes.new("ShaderNodeTexImage"); node.image = bpy.data.images.load(os.path.join(tex, fname))
+maps = {"Roughness": os.path.join(tex, "Character_roughness.jpg"), "Metallic": os.path.join(tex, "Character_metallic.jpg")}
+if outfit:                                              # swap in an ActorCore colour variant (same UV layout)
+    maps = {"Roughness": os.path.join(outfit, "Roughness.jpg"), "Metallic": os.path.join(outfit, "Metallic.jpg")}
+    for l in nt.links:
+        if l.to_socket == bsdf.inputs["Base Color"]: l.from_node.image = bpy.data.images.load(os.path.join(outfit, "Diffuse.jpg"))
+        if l.to_node.type == "NORMAL_MAP" and l.from_node.type == "TEX_IMAGE":
+            l.from_node.image = bpy.data.images.load(os.path.join(outfit, "Normal.jpg")); l.from_node.image.colorspace_settings.name = "Non-Color"
+for sock, path in maps.items():
+    node = nt.nodes.new("ShaderNodeTexImage"); node.image = bpy.data.images.load(path)
     node.image.colorspace_settings.name = "Non-Color"; nt.links.new(node.outputs["Color"], bsdf.inputs[sock])
 bsdf.inputs["Specular IOR Level"].default_value = 0.5
 for l in list(nt.links):
@@ -59,10 +68,35 @@ def face_action(name, end, talk):
     sk.animation_data.action = None
     return act
 
+
+from mathutils import Matrix, Vector
+def head_yaw():
+    pb = arm.pose.bones["CC_Base_Head"]
+    M = (arm.matrix_world @ pb.matrix).to_3x3(); R = (arm.matrix_world @ pb.bone.matrix_local).to_3x3()
+    f = (M @ R.inverted()) @ Vector((0, -1, 0))
+    return math.degrees(math.atan2(f.x, -f.y))
+
+def face_forward(act, end):
+    """The ActorCore Idle clip keeps the head turned ~30 deg to one side: turn it back to face the camera."""
+    arm.animation_data.action = act
+    if getattr(arm.animation_data, "action_slot", None) is None and getattr(act, "slots", None): arm.animation_data.action_slot = act.slots[0]
+    pb = arm.pose.bones["CC_Base_Head"]
+    yaws = []
+    for f in range(1, end + 1, 5): scene.frame_set(f); yaws.append(head_yaw())
+    corr = -sum(yaws) / len(yaws)
+    for f in range(1, end + 1):
+        scene.frame_set(f)
+        M = pb.matrix.copy(); h = M.translation.copy()
+        pb.matrix = Matrix.Translation(h) @ Matrix.Rotation(math.radians(corr), 4, "Z") @ Matrix.Translation(-h) @ M
+        pb.keyframe_insert("rotation_quaternion" if pb.rotation_mode == "QUATERNION" else "rotation_euler", frame=f)
+    scene.frame_set(1); print("HEAD", act.name, "turned", round(corr, 1), "deg; now", round(head_yaw(), 1))
+    arm.animation_data.action = None
+
 arm.animation_data_create()
 for name, path, talk in (("Idle", idle_fbx, False), ("Talk", talk_fbx, True)):
     act = import_motion(path); act.name = name
     end = int(act.frame_range[1])
+    if not talk: face_forward(act, end)
     t = arm.animation_data.nla_tracks.new(); t.name = name
     s = t.strips.new(name, 1, act)
     fa = face_action(name, end, talk)
@@ -81,6 +115,10 @@ for tr in arm.animation_data.nla_tracks: tr.mute = tr.name != "Talk"
 for tr in mesh.data.shape_keys.animation_data.nla_tracks: tr.mute = tr.name != "Talk"
 for fr in (1, 400, 900):
     scene.frame_set(fr); scene.render.filepath = f"{preview}_talk_{fr}.png"; bpy.ops.render.render(write_still=True)
+for tr in arm.animation_data.nla_tracks: tr.mute = tr.name != "Idle"
+for tr in mesh.data.shape_keys.animation_data.nla_tracks: tr.mute = tr.name != "Idle"
+for fr in (170,):
+    scene.frame_set(fr); scene.render.filepath = f"{preview}_idle_{fr}.png"; bpy.ops.render.render(write_still=True)
 for tr in list(arm.animation_data.nla_tracks) + list(mesh.data.shape_keys.animation_data.nla_tracks): tr.mute = False
 bpy.data.objects.remove(cam); bpy.data.objects.remove(sun)
 scene.frame_set(1)

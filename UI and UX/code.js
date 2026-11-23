@@ -15,41 +15,6 @@ const history = [];
 viewer.addEventListener('load', () => viewer.parentElement.classList.add('loaded'));
 viewer.addEventListener('error', () => viewer.parentElement.classList.remove('loaded'));
 
-// Small camera offsets make the character turn towards the mouse.
-const neutralOrbit = viewer.getAttribute('camera-orbit');
-const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
-let followFrame = 0;
-let following = false;
-
-function restCamera() {
-  cancelAnimationFrame(followFrame);
-  followFrame = 0;
-  if (following) viewer.cameraOrbit = neutralOrbit;
-  following = false;
-}
-
-document.addEventListener('pointermove', event => {
-  if (event.pointerType !== 'mouse' || event.buttons || reducedMotion.matches) return;
-  cancelAnimationFrame(followFrame);
-  followFrame = requestAnimationFrame(() => {
-    const box = viewer.getBoundingClientRect();
-    if (!box.width || !box.height || !viewer.loaded) return;
-    const x = (event.clientX - box.left - box.width / 2) / (box.width / 2);
-    const y = (event.clientY - box.top - box.height / 2) / (box.height / 2);
-    const yaw = -22 * Math.tanh(x);
-    const pitch = 86 - 9 * Math.tanh(y);
-    viewer.cameraOrbit = yaw.toFixed(2) + 'deg ' + pitch.toFixed(2) + 'deg 1.92m';
-    following = true;
-  });
-}, {passive: true});
-viewer.addEventListener('pointerdown', () => {
-  cancelAnimationFrame(followFrame);
-  following = false;
-});
-document.documentElement.addEventListener('pointerleave', restCamera);
-window.addEventListener('blur', restCamera);
-reducedMotion.addEventListener('change', restCamera);
-
 function update() {
   status.textContent = pending ? 'Thinking…' : listening ? 'Listening…' : speaking ? 'Humo is speaking' : 'Ready to chat';
   el('sound').textContent = voice ? 'Voice on' : 'Voice off';
