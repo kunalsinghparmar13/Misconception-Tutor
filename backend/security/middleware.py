@@ -13,7 +13,7 @@ import logging
 import os
 import threading
 import time
-from typing import Dict, List, Optional, Set
+from typing import Dict, List
 
 from flask import Flask, Response, jsonify, request
 from werkzeug.exceptions import HTTPException

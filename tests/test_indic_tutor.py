@@ -2,10 +2,8 @@
 Tests for Indic Multilingual Socratic Engine and Symbolic Entity Shield.
 """
 
-import pytest
 from backend.indic_tutor import (
     SymbolicEntityShield,
-    LOCALIZED_MISCONCEPTIONS,
     INDIC_LANGUAGES,
     localize_tutor_response,
 )

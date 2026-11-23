@@ -14,10 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
-import math
-import os
 import sqlite3
-import uuid
 from datetime import datetime, date, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
@@ -614,7 +611,6 @@ def evaluate_explanation(
     words = text.split()
     word_count = len(words)
     text_lower = text.lower()
-    misc_lower = (misconception or "").lower()
 
     if word_count < 6:
         return {

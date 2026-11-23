@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import json
 from unittest.mock import MagicMock, patch
 import pytest
 
-from backend import auth, backend_code, supabase_db
+from backend import supabase_db
 from backend.api import app
 
 

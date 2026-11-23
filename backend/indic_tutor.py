@@ -5,7 +5,7 @@ Employs Dual-Pass Cognitive Decoupling to guarantee exact LaTeX & code notation 
 """
 
 import re
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Any, Tuple
 
 # Supported Language Specifications
 INDIC_LANGUAGES = {

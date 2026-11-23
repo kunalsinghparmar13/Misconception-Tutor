@@ -5,10 +5,9 @@ Sessions Library, Practice Lab, Analytics Dashboard, Notifications, and Context 
 from __future__ import annotations
 
 import io
-import json
 import pytest
 
-from backend import api, auth, backend_code
+from backend import api
 
 
 @pytest.fixture

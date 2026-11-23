@@ -9,7 +9,6 @@ Gracefully falls back to local SQLite if Supabase is unreachable or unconfigured
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 from typing import Any, Dict, List, Optional
