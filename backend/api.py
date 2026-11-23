@@ -85,7 +85,7 @@ def index():
     return send_from_directory(UI_DIR, "index.html")
 
 
-@app.get("/<any('code.html','code.css','code.js','workspace-switch.js','click-sound.js','ui-click.wav','workspace-switch.css','bubu.glb','bubu-portrait.png','pixel-hand.png'):asset>")
+@app.get("/<any('code.html','code.css','code.js','workspace-switch.js','click-sound.js','ui-click.wav','workspace-switch.css','bubu.glb','bubu-portrait.png','party-m.glb','party-m-portrait.png','pixel-hand.png'):asset>")
 def workspace_asset(asset):
     return send_from_directory(UI_DIR, asset)
 

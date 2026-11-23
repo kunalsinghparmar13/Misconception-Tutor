@@ -60,9 +60,21 @@ function update() {
   for (const button of document.querySelectorAll('[data-start]')) button.disabled = pending;
 }
 
+// The model carries two looping ActorCore mocap clips: "Idle" (5.7 s) and "Talk" ("Stand Talk", 28 s, plus lip shapes).
+function talk(on) {
+  if (!viewer.availableAnimations?.includes('Talk')) return;
+  const name = on ? 'Talk' : 'Idle';
+  if (viewer.animationName === name) return;
+  viewer.animationName = name;
+  viewer.play();
+  // Start the long talk clip at a random point so each reply shows different gestures.
+  if (on) requestAnimationFrame(() => { viewer.currentTime = Math.random() * Math.max(0, viewer.duration - 6); });
+}
+
 function silence() {
   speaking = null;
   synth?.cancel();
+  talk(false);
 }
 function speak(text) {
   silence();
@@ -70,8 +82,9 @@ function speak(text) {
     const speech = new SpeechSynthesisUtterance(text);
     speaking = speech;
     speech.lang = el('lang').value;
+    speech.onstart = () => { if (speaking === speech) talk(true); };
     speech.onend = speech.onerror = () => {
-      if (speaking === speech) { speaking = null; update(); }
+      if (speaking === speech) { speaking = null; talk(false); update(); }
     };
     synth.speak(speech);
   }

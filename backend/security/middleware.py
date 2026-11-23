@@ -105,7 +105,7 @@ def apply_security_headers(response: Response) -> Response:
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
         "font-src 'self' https://fonts.gstatic.com data:",
         "img-src 'self' data: blob: https:",
-        "connect-src 'self' https: wss:",
+        "connect-src 'self' blob: https: wss:",  # blob: lets the 3D viewer unpack textures inside .glb files
         "frame-ancestors 'self'",
         "base-uri 'self'",
         "form-action 'self'",
