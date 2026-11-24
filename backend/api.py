@@ -47,6 +47,11 @@ app = Flask(__name__)
 # Register ECC Enterprise Security Suite (Security Headers & Rate Limiting)
 register_security_middleware(app)
 
+# Humex backend (Humo, the 3D voice tutor): /api/humex/chat and /api/humex/health, see backend/humex/
+from backend.humex import register as register_humex  # noqa: E402
+
+register_humex(app)
+
 # Initialize database tables on startup
 backend_code.init_db()
 
@@ -1038,51 +1043,6 @@ def llm_answer():
 def tutor_agents_sync():
     """Run the four agents and return one JSON document (see /api/tutor/stream for live progress)."""
     return llm_answer()
-
-
-_HUMEX_REFUSAL = {
-    "en": "I can't follow instructions like that, but I'd love to think through a maths, logic or coding question with you. What are you working on?",
-    "hi": "मैं ऐसे निर्देश नहीं मान सकता, पर गणित, तर्क या कोडिंग के किसी सवाल पर साथ सोचना अच्छा लगेगा। तुम किस पर काम कर रहे हो?",
-}
-
-
-@app.post("/api/humex/chat")
-def humex_chat():
-    """Humo, the Humex 3D tutor: a hint-only Socratic reply, checked by the reviewer, for the avatar to speak."""
-    from tutor_agents.humex import get_coach
-    from tutor_agents.model_client import ModelUnavailable
-
-    body = request.get_json(silent=True) or {}
-    message = sanitize_input_text(str(body.get("message", "")).strip(), max_length=1600)
-    if not message:
-        return jsonify({"error": "Say or type a message first."}), 400
-    language = sanitize_input_text(str(body.get("language", "en")), max_length=8).lower().split("-")[0] or "en"
-
-    history = []
-    for turn in (body.get("history") or [])[-10:]:
-        if isinstance(turn, dict):
-            history.append({"role": str(turn.get("role", "")),
-                            "content": sanitize_input_text(str(turn.get("content", "")), max_length=1600)})
-    # The whole learner side is scanned, because the browser sends the history back to us.
-    for text in [message] + [t["content"] for t in history if t["role"] == "user"]:
-        if not prompt_guard.scan(text).is_safe:
-            reply = _HUMEX_REFUSAL.get(language, _HUMEX_REFUSAL["en"])
-            return jsonify({"reply": reply, "status": "refused_injection",
-                            "review": {"verdict": "REFUSED", "issues": [], "checks": [], "revised": True}})
-
-    if not _tutor_slots.acquire(blocking=False):
-        return jsonify({"error": "Humo is busy with other learners. Please retry in a few seconds."}), 429
-    try:
-        result = get_coach().respond(message, history, language=language,
-                                     subject=sanitize_input_text(str(body.get("subject", "")), max_length=64))
-        return jsonify(result.to_dict())
-    except ModelUnavailable as exc:
-        return jsonify({"error": exc.public_message, "status": "model_unavailable"}), 503
-    except Exception:
-        app.logger.exception("humex_chat failed")
-        return jsonify({"error": "Humo hit an unexpected error."}), 500
-    finally:
-        _tutor_slots.release()
 
 
 @app.post("/api/tutor/stream")

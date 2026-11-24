@@ -157,5 +157,13 @@ el('mic').onclick = () => {
   update();
 };
 if (!Recognition) el('notice').textContent = 'Voice input is unavailable in this browser. You can type a message.';
+
+// Ask the Humex backend whether Humo's model is connected, so learners know if they get the live tutor or the demo.
+fetch('/api/humex/health', {signal: AbortSignal.timeout(10000)})
+  .then(response => response.json())
+  .then(health => {
+    if (!health.ready && !el('notice').textContent) el('notice').textContent = 'Guided demo · Humo’s model is offline right now';
+  })
+  .catch(() => {});
 window.addEventListener('pagehide', () => { listening?.abort(); silence(); });
 update();
