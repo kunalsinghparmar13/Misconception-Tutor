@@ -1,0 +1,32 @@
+{
+  "base_model": "unsloth/Qwen3.5-4B",
+  "thinking_mode": "auto",
+  "lora_r": 32,
+  "lora_alpha": 32,
+  "max_seq": 2048,
+  "epochs": 1,
+  "learning_rate": 0.0001,
+  "train_rows": 3601,
+  "mix": {
+    "openthoughts3_math": 1987,
+    "proofwriter_v4": 800,
+    "folio_v4": 201,
+    "pfolio": 613
+  },
+  "train_loss": 0.3189,
+  "init_adapter": "/kaggle/input/datasets/kunalsinghparmar13/qwen35-4b-lora-v3-adapter",
+  "accuracy_before": {
+    "openr1_math_test": 0.565,
+    "folio_test": 0.667,
+    "proofwriter_test": 0.706,
+    "overall": 0.641
+  },
+  "accuracy_after": {
+    "openr1_math_test": 0.739,
+    "folio_test": 0.75,
+    "proofwriter_test": 0.706,
+    "overall": 0.734
+  },
+  "serve_with": "enable_thinking=True for questions trained with reasoning traces, False for plain answers",
+  "finished_utc": "2026-11-24T14:07:45.072490+00:00"
+}
