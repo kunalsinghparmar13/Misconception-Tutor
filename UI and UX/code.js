@@ -26,14 +26,28 @@ function update() {
 }
 
 // The model carries two looping ActorCore mocap clips: "Idle" (5.7 s) and "Talk" ("Stand Talk", 28 s, plus lip shapes).
+// The Talk mocap has long still stretches (1-1.5 s, 3-5.5 s, 12-16 s, 20 s, 21.5 s, 23.5-25 s) where Humo barely
+// moves, so a random start often looked like he waited before gesturing. These start times are already mid-gesture:
+// each moves strongly in its first half-second and stays above the clip's median motion for at least 1.5 s
+// (measured from the clip's arm, hand, spine and head rotations: 1260-2430 vs 100-300 deg/s in the still stretches;
+// see scripts/blender/talk_motion.py). The lip shapes run through the whole clip, so the mouth moves from any of them.
+const GESTURE_STARTS = [8.5, 9.0, 10.0, 10.5, 16.5, 17.5, 18.0, 18.5];
+let lastStart = -1;
 function talk(on) {
   if (!viewer.availableAnimations?.includes('Talk')) return;
   const name = on ? 'Talk' : 'Idle';
   if (viewer.animationName === name) return;
+  // Snap into talking almost at once; ease back to idle slowly so the end of a reply still looks natural.
+  viewer.animationCrossfadeDuration = on ? 120 : 350;
   viewer.animationName = name;
   viewer.play();
-  // Start the long talk clip at a random point so each reply shows different gestures.
-  if (on) requestAnimationFrame(() => { viewer.currentTime = Math.random() * Math.max(0, viewer.duration - 6); });
+  if (on) {
+    let start = lastStart;
+    while (start === lastStart) start = GESTURE_STARTS[Math.floor(Math.random() * GESTURE_STARTS.length)];
+    lastStart = start;   // a different gesture from the previous reply
+    // model-viewer swaps the clip on its next update, so jump to the gesture on the following frame.
+    requestAnimationFrame(() => { if (viewer.animationName === 'Talk') viewer.currentTime = start; });
+  }
 }
 
 // Speech starts the moment Humo's reply arrives:
