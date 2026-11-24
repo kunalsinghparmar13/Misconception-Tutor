@@ -128,11 +128,11 @@ class ModelClient:
 
     @property
     def model_name(self) -> str:
-        return (
-            self._model_name
-            or os.getenv("LLM_MODEL_NAME")
-            or "misconception-tutor-gemma4-e4b (fine-tuned)"
-        )
+        if self._model_name or os.getenv("LLM_MODEL_NAME"):
+            return self._model_name or os.environ["LLM_MODEL_NAME"]
+        from .backends import default_model_name  # Qwen (LLM/humex) or Gemma, from the adapter config
+
+        return default_model_name()
 
     # ------------------------------------------------------------------ health
     def health(self, max_age: float = 5.0) -> Dict[str, Any]:

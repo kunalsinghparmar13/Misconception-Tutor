@@ -44,6 +44,21 @@ print(tokenizer.decode(model.generate(**inputs, max_new_tokens=1024)[0][inputs["
 Use `enable_thinking=True` for math, logic and code (it was trained to reason in `<think>` first)
 and `False` for short conversational replies. It needs a GPU with about 10 GB of memory in 16-bit.
 
-The app's existing server (`LLM/serve/model_server.py`) is written for the earlier Gemma adapter:
-its Unsloth backend applies the Gemma chat template, so it needs a small change before it can
-serve this Qwen adapter.
+## Serving it in the app
+
+The model server picks this folder by default (before the older Gemma adapter in `LLM/`) and detects
+from `adapter_config.json` that it is a Qwen adapter, so it uses the chat template saved here:
+
+```bash
+python LLM/serve/model_server.py        # on a GPU machine; serves an OpenAI-style API on :8001
+```
+
+Then start the app with `LLM_BACKEND_URL` pointing at that server. Humo (`/api/humex/chat`) sends every
+reply through the hint-only coach and the reviewer before the 3D avatar speaks it.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `LLM_ADAPTER_PATH` | `LLM/humex` | another adapter folder or Hugging Face repo id |
+| `LLM_THINKING` | `0` | `1` lets Qwen think step by step first (better on hard problems, much slower to speak) |
+| `LLM_LOAD_4BIT` | `1` | `0` loads 16-bit weights (needs about 10 GB of GPU memory) |
+| `LLM_GEN_BACKEND` | `auto` | `unsloth` or `peft` |

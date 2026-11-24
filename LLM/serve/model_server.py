@@ -1,4 +1,4 @@
-"""OpenAI-compatible HTTP server for the fine-tuned Gemma adapter.
+"""OpenAI-compatible HTTP server for the fine-tuned adapter (Qwen3.5-4B in LLM/humex, or the earlier Gemma one).
 
 Run this wherever a GPU is available (a free Kaggle/Colab notebook, Modal, your own machine):
 
@@ -15,7 +15,8 @@ Endpoints
 
 Environment
     MODEL_SERVER_TOKEN   if set, /v1/* require ``Authorization: Bearer <token>``
-    LLM_ADAPTER_PATH     adapter folder or Hugging Face repo id (default: ``LLM/`` in this repo)
+    LLM_ADAPTER_PATH     adapter folder or Hugging Face repo id (default: ``LLM/humex``, else ``LLM/``)
+    LLM_THINKING=1       let Qwen think step by step before replying (slower; off by default)
     LLM_GEN_BACKEND      ``unsloth`` (default, same stack as tutor-project.ipynb) or ``peft``
     MODEL_BACKEND=stub   skip loading; answer with a fixed string (to test networking only)
     PORT                 default 8001
@@ -53,7 +54,11 @@ MAX_WAITING = int(os.getenv("MODEL_MAX_QUEUE", "3"))
 
 
 def model_name() -> str:
-    return os.getenv("LLM_MODEL_NAME", "misconception-tutor-gemma4-e4b")
+    if os.getenv("LLM_MODEL_NAME"):
+        return os.environ["LLM_MODEL_NAME"]
+    from tutor_agents.backends import default_model_name  # Qwen (LLM/humex) or Gemma, from the adapter config
+
+    return default_model_name().replace(" (fine-tuned)", "")
 
 
 class _StubBackend:
