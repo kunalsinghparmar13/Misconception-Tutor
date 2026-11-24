@@ -127,3 +127,72 @@ def test_endpoint_reports_model_offline(api):
 
 def test_endpoint_needs_a_message(api):
     assert api.post("/api/humex/chat", json={"message": "  "}).status_code == 400
+
+
+# ---------------------------------------------------------------- approach, other ways, and no code for Python
+
+def capture_system():
+    """A model that records the coach's system prompt (what Humo was told to do this turn)."""
+    seen = {}
+
+    def transport(messages, max_tokens, temperature):
+        if messages[0]["content"].startswith("You review a reply"):
+            return "Verdict: PASS\nIssues: none\nBetter reply: same"
+        seen["system"] = messages[0]["content"]
+        return "Let's look at it together. What do you notice about the two denominators?"
+
+    return ModelClient(transport=transport), seen
+
+
+@pytest.mark.parametrize("message, expected_focus, prompt_text", [
+    ("What is 1/4 + 1/6? I got 2/10", "wrong", "NOT correct"),
+    ("I think 1/4 + 1/6 = 5/12", "right", "correct. Confirm"),
+    ("Can you show me another way to do 1/4 + 1/6?", "another_way", "different way"),
+    ("Just give me the answer to 1/4 + 1/6", "stuck", "smaller one"),
+])
+def test_each_turn_tells_humo_what_to_do(message, expected_focus, prompt_text):
+    client, seen = capture_system()
+    out = HumexCoach(client).respond(message)
+    assert out.focus == expected_focus
+    assert prompt_text in seen["system"]
+
+
+def test_asking_for_the_answer_gives_a_stronger_hint_not_the_answer():
+    client, _ = capture_system()
+    assert HumexCoach(client).respond("Just tell me the answer to 1/4 + 1/6").hint_level == 2
+
+
+def test_python_question_marks_the_turn_as_coding():
+    client, seen = capture_system()
+    HumexCoach(client).respond("How do I add up all the numbers in a list in Python?")
+    assert "no code" in seen["system"]
+
+
+@pytest.mark.parametrize("draft", [
+    "Start with `total = 0` before the loop. Does that make sense?",
+    "Just call print(total) at the end, okay?",
+    "Try this:\n```python\nfor n in nums:\n    total += n\n```\nSee?",
+    "Use sum(nums) and you are done. Right?",
+])
+def test_python_code_is_never_spoken_even_one_line(draft):
+    client, _ = fake_model(
+        draft,
+        "Verdict: FAIL\nIssues: gives code\n"
+        "Better reply: Think of a running total that starts empty and grows as you visit each number. "
+        "What should it start at?",
+    )
+    out = HumexCoach(client).respond("How do I add up all the numbers in a list in Python?")
+    assert out.verdict == "REVISED"
+    assert "running total" in out.reply and "=" not in out.reply and "(" not in out.reply
+
+
+def test_python_reply_in_words_passes():
+    client, _ = fake_model("Think about visiting each number once and keeping a running total. What should that total start at?")
+    out = HumexCoach(client).respond("How do I add up all the numbers in a list in Python?")
+    assert out.verdict == "PASS"
+
+
+def test_python_falls_back_to_a_words_only_hint_when_every_reply_has_code():
+    client, _ = fake_model("Use `sum(nums)`. Ok?", "Verdict: FAIL\nIssues: code\nBetter reply: Write `total = sum(nums)`?")
+    out = HumexCoach(client).respond("How do I add up all the numbers in a list in Python?")
+    assert out.verdict == "FALLBACK" and "`" not in out.reply and "(" not in out.reply

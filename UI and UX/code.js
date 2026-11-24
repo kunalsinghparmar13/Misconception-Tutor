@@ -36,23 +36,53 @@ function talk(on) {
   if (on) requestAnimationFrame(() => { viewer.currentTime = Math.random() * Math.max(0, viewer.duration - 6); });
 }
 
+// Speech starts the moment Humo's reply arrives:
+// - voices are loaded up front and the engine is woken on the learner's first click, so nothing loads on demand;
+// - cancel() runs only when something is actually playing (Chrome delays or drops speech queued right after it);
+// - the reply is spoken sentence by sentence, so the first sentence starts sooner and long replies never stall;
+// - the talking animation starts together with the speech request instead of waiting for the engine's start event.
+let voices = [];
+function loadVoices() { voices = synth?.getVoices() || []; }
+if (synth) { loadVoices(); synth.addEventListener?.('voiceschanged', loadVoices); }
+function pickVoice(lang) {
+  const base = lang.split('-')[0];
+  return voices.find(v => v.lang === lang) || voices.find(v => v.lang?.startsWith(base)) || null;
+}
+let warmed = false;
+function warmUp() {
+  if (warmed || !synth || !voice) return;
+  warmed = true;
+  const wake = new SpeechSynthesisUtterance(' ');
+  wake.volume = 0;
+  synth.speak(wake);
+}
+function sentences(text) {
+  return (text.match(/[^.!?।]+[.!?।]*/g) || [text]).map(part => part.trim()).filter(Boolean);
+}
+
 function silence() {
   speaking = null;
-  synth?.cancel();
+  if (synth && (synth.speaking || synth.pending)) synth.cancel();
   talk(false);
 }
 function speak(text) {
   silence();
-  if (voice) {
-    const speech = new SpeechSynthesisUtterance(text);
-    speaking = speech;
-    speech.lang = el('lang').value;
-    speech.onstart = () => { if (speaking === speech) talk(true); };
-    speech.onend = speech.onerror = () => {
-      if (speaking === speech) { speaking = null; talk(false); update(); }
-    };
+  if (!voice || !synth) { update(); return; }
+  const turn = {};
+  speaking = turn;
+  const lang = el('lang').value;
+  const chosen = pickVoice(lang);
+  const done = () => { if (speaking === turn) { speaking = null; talk(false); update(); } };
+  const parts = sentences(text);
+  parts.forEach((part, i) => {
+    const speech = new SpeechSynthesisUtterance(part);
+    speech.lang = lang;
+    if (chosen) speech.voice = chosen;
+    if (i === parts.length - 1) speech.onend = done;
+    speech.onerror = event => { if (event.error !== 'interrupted' && event.error !== 'canceled') done(); };
     synth.speak(speech);
-  }
+  });
+  talk(true);
   update();
 }
 
@@ -135,11 +165,12 @@ async function send(text) {
   add('Humo', reply, note);
   speak(reply);
 }
-document.querySelector('form').onsubmit = event => { event.preventDefault(); send(field.value); };
-document.querySelectorAll('[data-start]').forEach(button => button.onclick = () => send(button.dataset.start));
+document.querySelector('form').onsubmit = event => { event.preventDefault(); warmUp(); send(field.value); };
+document.querySelectorAll('[data-start]').forEach(button => button.onclick = () => { warmUp(); send(button.dataset.start); });
 el('sound').disabled = !synth;
 el('sound').onclick = () => { voice = !voice; if (!voice) silence(); update(); };
 el('mic').onclick = () => {
+  warmUp();
   if (listening) { listening.stop(); return; }
   silence();
   const session = new Recognition();

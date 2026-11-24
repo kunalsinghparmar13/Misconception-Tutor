@@ -22,7 +22,7 @@ from typing import Dict, List, Optional
 
 from . import grounding as gr
 from .model_client import ModelClient
-from .prompts import HUMEX_COACH, HUMEX_HINT_LEVELS, HUMEX_REVIEWER
+from .prompts import HUMEX_COACH, HUMEX_FOCUS, HUMEX_HINT_LEVELS, HUMEX_REVIEWER
 
 Message = Dict[str, str]
 
@@ -37,8 +37,22 @@ _ANSWER_PHRASES = re.compile(
     r"\b(final answer|the answer is|answer\s*(is|=|:)|the solution is|correct answer|so it equals|= *the answer)\b",
     re.IGNORECASE,
 )
-_CODE_BLOCK = re.compile(r"```(?:\w+)?\n(.*?)```", re.DOTALL)
-_GIVE_UP = re.compile(r"\b(just tell me|give me the answer|tell me the answer|what'?s the answer|show me the answer)\b", re.I)
+_CODE_BLOCK = re.compile(r"```(?:\w+)?\n?(.*?)```", re.DOTALL)
+# A line of Python: a statement keyword, a call like print(...), or an assignment such as total = 0.
+_CODE_LINE = re.compile(
+    r"^\s*(def |class |import |from \S+ import |for \w+ in |while .+:|if .+:\s*$|elif |else:|return\b|try:|except\b|"
+    r"print\(|\w+(\.\w+)*\(.*\)\s*$|[A-Za-z_]\w*\s*(\[.*\])?\s*[-+*/]?=\s*[^=])",
+    re.MULTILINE,
+)
+_INLINE_CODE = re.compile(r"`([^`\n]+)`")
+_CALL = re.compile(r"\b[a-z_][a-z0-9_]*(\.[a-z_]\w*)*\((?!s\))[^()\n]{0,40}\)")   # print(total), nums.sort(), len(x); not item(s)
+_CODING_WORDS = re.compile(r"\b(python|code|coding|program|function|loop|list|dict|string|variable|error|bug|"
+                           r"print|def|syntax|indent|traceback)\b", re.IGNORECASE)
+_ANOTHER_WAY = re.compile(r"\b(another|other|different|new|alternative)\s+(way|method|approach)|\bany other way\b|"
+                          r"दूसरा तरीका|और तरीका|अलग तरीका", re.IGNORECASE)
+_GIVE_UP = re.compile(r"\b(just tell me|give me the (answer|code|solution)|tell me the answer|what'?s the answer|"
+                      r"show me the (answer|code|solution)|write the code|solve it for me|i give up|i'?m stuck|"
+                      r"i don'?t know)\b|उत्तर बताओ|जवाब बताओ", re.I)
 
 
 @dataclass
@@ -55,6 +69,7 @@ class HumexReply:
     issues: List[str] = field(default_factory=list)
     checks: List[HumexCheck] = field(default_factory=list)
     hint_level: int = 1
+    focus: str = "start"
     kind: str = "general"
     seconds: float = 0.0
     model: str = ""
@@ -100,8 +115,30 @@ def _reveals_value(text: str, value: Optional[str]) -> bool:
     return any(n == target for n in gr.numbers_in(text))
 
 
-def check_reply(reply: str, g: gr.Grounding, learner_text: str) -> List[HumexCheck]:
-    """Exact checks that do not trust the model."""
+def is_coding(g: gr.Grounding, learner_text: str, subject: str = "") -> bool:
+    """A programming conversation: grounding found code, the subject is Python, or the learner talks about code."""
+    return g.is_code or subject.strip().lower() in {"python", "programming", "coding"} or bool(_CODING_WORDS.search(learner_text))
+
+
+def _code_in(raw: str, coding: bool) -> str:
+    """Describe any code in the reply ('' if none). In a coding chat even one line or `snippet` counts."""
+    blocks = [b for b in _CODE_BLOCK.findall(raw) if b.strip()]
+    if blocks and (coding or any(len([ln for ln in b.splitlines() if ln.strip()]) >= 3 for b in blocks)):
+        return "contains a code block"
+    if coding:
+        prose = _CODE_BLOCK.sub("", raw)
+        snippet = next((s for s in _INLINE_CODE.findall(prose) if re.search(r"[=(\[:]", s)), None)
+        if snippet:
+            return f"contains code `{snippet}`"
+        line = _CODE_LINE.search(prose) or _CALL.search(prose)
+        if line:
+            return f"contains code '{line.group(0).strip()[:40]}'"
+    return ""
+
+
+def check_reply(reply: str, g: gr.Grounding, learner_text: str, coding: bool = False,
+                raw: Optional[str] = None) -> List[HumexCheck]:
+    """Exact checks that do not trust the model. ``raw`` is the model's text before markdown was stripped."""
     checks: List[HumexCheck] = []
     learner_has_it = g.student_correct is True or _reveals_value(learner_text, g.verified_answer)
 
@@ -112,8 +149,8 @@ def check_reply(reply: str, g: gr.Grounding, learner_text: str) -> List[HumexChe
     phrase = _ANSWER_PHRASES.search(reply)
     checks.append(HumexCheck("no_answer_phrase", phrase is None, f"uses '{phrase.group(0)}'" if phrase else ""))
 
-    big_code = any(len([ln for ln in block.splitlines() if ln.strip()]) >= 3 for block in _CODE_BLOCK.findall(reply))
-    checks.append(HumexCheck("no_full_code", not big_code, "contains a full code block" if big_code else ""))
+    code = _code_in(raw if raw is not None else reply, coding)
+    checks.append(HumexCheck("no_full_code", not code, code))
 
     asks = "?" in reply or "？" in reply
     checks.append(HumexCheck("asks_question", asks, "" if asks else "does not ask the learner a question"))
@@ -123,14 +160,30 @@ def check_reply(reply: str, g: gr.Grounding, learner_text: str) -> List[HumexChe
     return checks
 
 
+def turn_focus(message: str, history: List[Message], g: gr.Grounding) -> str:
+    """What this reply must do: help pick an approach, correct a wrong one, confirm, offer another way, or unstick."""
+    if _ANOTHER_WAY.search(message):
+        return "another_way"
+    if _GIVE_UP.search(message):
+        return "stuck"
+    if g.student_correct is False:
+        return "wrong"
+    if g.student_correct is True:
+        return "right"
+    return "continue" if any(t["role"] == "assistant" for t in history) else "start"
+
+
 def _blocking(checks: List[HumexCheck]) -> List[HumexCheck]:
     """Leaks are never allowed through; the other checks are style and can be fixed by the reviewer."""
     return [c for c in checks if not c.ok and c.name in {"no_answer_leak", "no_answer_phrase", "no_full_code"}]
 
 
-def fallback_hint(g: gr.Grounding, language: str) -> str:
+def fallback_hint(g: gr.Grounding, language: str, coding: bool = False) -> str:
     """A safe hint that cannot leak anything, used only when every model reply leaked the answer."""
     hi = language == "hi"
+    if coding and g.kind != "python":
+        return ("कोड लिखने से पहले, शब्दों में बताओ: प्रोग्राम को क्या लेना है, क्या करना है, और क्या दिखाना है?" if hi else
+                "Before any code, say it in words: what does the program take in, what must it do, and what should it show?")
     if g.kind == "fraction":
         return ("चलो धीरे चलते हैं। भिन्नों को जोड़ने से पहले हरों के बारे में क्या सच होना चाहिए?" if hi else
                 "Let's slow down. Before you combine the fractions, what has to be true about their denominators?")
@@ -178,17 +231,21 @@ class HumexCoach:
         started = time.time()
         history = clean_history(history or [])
         language = language if language in LANGUAGES else "en"
-        level = 3 if _GIVE_UP.search(message) and hint_level(history) < 3 else hint_level(history)
         problem = _problem_text(history, message)
         g = gr.ground(problem, subject)
+        coding = is_coding(g, problem, subject)
+        focus = turn_focus(message, history, g)
+        level = min(3, hint_level(history) + 1) if focus == "stuck" else hint_level(history)
         facts = g.facts_block().replace("Verified facts", "Private facts") or "Private facts: none for this message."
 
         # 1. Coach draft
-        system = HUMEX_COACH.format(language_rule=LANGUAGES[language], hint_level=HUMEX_HINT_LEVELS[level])
+        system = HUMEX_COACH.format(language_rule=LANGUAGES[language], hint_level=HUMEX_HINT_LEVELS[level],
+                                    focus=HUMEX_FOCUS[focus] + (" This is a programming question: ideas in words, no code."
+                                                                 if coding else ""))
         convo = history + [{"role": "user", "content": f"{message}\n\n{facts}"}]
         draft_res = self.client.chat([{"role": "system", "content": system}] + convo, max_tokens=220, temperature=0.4)
         draft = _spoken(draft_res.text)
-        checks = check_reply(draft, g, problem)
+        checks = check_reply(draft, g, problem, coding, raw=draft_res.text)
 
         # 2. Reviewer: model critique with the exact check results, may rewrite the reply
         transcript = "\n".join(f"{'Learner' if t['role'] == 'user' else 'Humo'}: {t['content']}" for t in history[-6:])
@@ -213,16 +270,16 @@ class HumexCoach:
         needs_fix = review["verdict"] == "FAIL" or bool(_blocking(checks))
         if needs_fix and review["better"]:
             candidate = _spoken(review["better"])
-            if not _blocking(check_reply(candidate, g, problem)):
+            if not _blocking(check_reply(candidate, g, problem, coding, raw=review["better"])):
                 reply, verdict = candidate, "REVISED"
 
         # 3. Safety net: the learner must never hear the answer
-        final_checks = check_reply(reply, g, problem)
+        final_checks = check_reply(reply, g, problem, coding, raw=draft_res.text if reply == draft else None)
         if _blocking(final_checks):
-            reply, verdict = fallback_hint(g, language), "FALLBACK"
-            final_checks = check_reply(reply, g, problem)
+            reply, verdict = fallback_hint(g, language, coding), "FALLBACK"
+            final_checks = check_reply(reply, g, problem, coding)
 
-        return HumexReply(reply=reply, verdict=verdict, issues=issues, checks=final_checks, hint_level=level,
+        return HumexReply(reply=reply, verdict=verdict, issues=issues, checks=final_checks, hint_level=level, focus=focus,
                           kind=g.kind, seconds=round(time.time() - started, 2), model=draft_res.model)
 
 
@@ -234,4 +291,4 @@ def get_coach(client: Optional[ModelClient] = None) -> HumexCoach:
     return HumexCoach(client)
 
 
-__all__ = ["HumexCoach", "HumexReply", "check_reply", "fallback_hint", "get_coach"]
+__all__ = ["HumexCoach", "HumexReply", "check_reply", "fallback_hint", "get_coach", "is_coding", "turn_focus"]
