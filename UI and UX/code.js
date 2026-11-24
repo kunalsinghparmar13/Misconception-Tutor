@@ -10,13 +10,13 @@ let listening = null;
 let speaking = null;
 let pending = false;
 let puzzle = false;
-const history = [];
+const history = [];   // {role:'user'|'assistant', content} turns sent back so Humo remembers the problem
 
 viewer.addEventListener('load', () => viewer.parentElement.classList.add('loaded'));
 viewer.addEventListener('error', () => viewer.parentElement.classList.remove('loaded'));
 
 function update() {
-  status.textContent = pending ? 'Thinking…' : listening ? 'Listening…' : speaking ? 'Humo is speaking' : 'Ready to chat';
+  status.textContent = pending ? 'Thinking and checking…' : listening ? 'Listening…' : speaking ? 'Humo is speaking' : 'Ready to chat';
   el('sound').textContent = voice ? 'Voice on' : 'Voice off';
   el('sound').setAttribute('aria-pressed', String(voice));
   el('mic').textContent = listening ? '■ Finish recording' : '◉ Microphone';
@@ -56,7 +56,7 @@ function speak(text) {
   update();
 }
 
-function add(who, text) {
+function add(who, text, note) {
   const entry = document.createElement('article');
   const label = document.createElement('b');
   const body = document.createElement('p');
@@ -64,9 +64,24 @@ function add(who, text) {
   label.textContent = who;
   body.textContent = text;
   entry.append(label, body);
+  if (note) {
+    const tag = document.createElement('small');
+    tag.className = 'reviewed';
+    tag.textContent = note;
+    entry.append(tag);
+  }
   messages.append(entry);
   messages.scrollTop = messages.scrollHeight;
-  history.push(who + ': ' + text);
+  history.push({role: who === 'You' ? 'user' : 'assistant', content: text});
+}
+
+// What the reviewer did with Humo's draft, shown under the reply.
+function reviewNote(review) {
+  if (!review) return '';
+  if (review.verdict === 'PASS') return '✓ Checked by reviewer';
+  if (review.verdict === 'REVISED') return '✓ Improved by reviewer';
+  if (review.verdict === 'FALLBACK') return '✓ Reviewer kept the answer hidden';
+  return '';
 }
 function guided(text) {
   const hi = el('lang').value === 'hi-IN';
@@ -91,32 +106,33 @@ async function send(text) {
   if (!text || pending) return;
   listening?.abort();
   silence();
-  const context = history.slice(-4).join('\n').slice(-1500);
+  const past = history.slice(-10);
   add('You', text);
   field.value = '';
   pending = true;
   el('notice').textContent = '';
   update();
-  let reply;
+  let reply, note = '';
   try {
     const request = window.tutorAuth?.apiFetch || window.fetch.bind(window);
-    const response = await request('/api/llm/answer', {
+    // Humo only gives hints and guiding questions; the server's reviewer checks every reply before it is spoken.
+    const response = await request('/api/humex/chat', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      signal:AbortSignal.timeout(30000),
-      body:JSON.stringify({question: context ? context + '\nCurrent question: ' + text : text,
-        subject:/python|code/i.test(text) ? 'Python' : 'Mathematics', language:el('lang').value.split('-')[0]})
+      signal:AbortSignal.timeout(60000),
+      body:JSON.stringify({message:text, history:past, language:el('lang').value.split('-')[0],
+        subject:/python|code|error|def |print\(/i.test(text) ? 'Python' : ''})
     });
     const data = await response.json();
-    if (!response.ok && !data.answer) throw new Error();
-    reply = data.answer || data.agents?.explainer?.text || data.agents?.explainer?.sections?.correct_thinking;
-    if (typeof reply !== 'string' || !reply.trim()) throw new Error();
+    if (!response.ok || typeof data.reply !== 'string' || !data.reply.trim()) throw new Error();
+    reply = data.reply;
+    note = reviewNote(data.review);
     puzzle = false;
   } catch {
     reply = guided(text);
     el('notice').textContent = 'Guided demo · Live tutor unavailable';
   }
   pending = false;
-  add('Humo', reply);
+  add('Humo', reply, note);
   speak(reply);
 }
 document.querySelector('form').onsubmit = event => { event.preventDefault(); send(field.value); };

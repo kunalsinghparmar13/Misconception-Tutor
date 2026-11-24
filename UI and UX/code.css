@@ -5,3 +5,4 @@ button,select{font:inherit;cursor:pointer;border:1px solid #cbd2c4;border-radius
 @media(max-width:780px){main{grid-template-columns:1fr}.studio{min-height:0}.portrait{min-height:260px}.intro{padding:18px 22px 0}.messages{flex:auto;height:240px}.studio-footer{padding:8px 16px}}
 
 .studio-footer { flex-wrap: wrap; }
+.messages article small.reviewed{display:block;margin-top:6px;font:500 11px system-ui;color:#4d6b57}

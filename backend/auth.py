@@ -28,6 +28,7 @@ DEFAULT_PUBLISHABLE_KEY = "sb_publishable_3Vz1SUNeQ1ddZlEetiCCqA_hf5QpN1_"
 PROTECTED_PREFIXES = (
     "/api/tutor",
     "/api/llm/answer",
+    "/api/humex/",
     "/api/llm/feedback",
     "/api/practice/",
     "/api/python/debug",

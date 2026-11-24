@@ -34,6 +34,7 @@ HEAVY_COMPUTE_PATHS = frozenset({
     "/api/tutor/stream",
     "/api/tutor",
     "/api/llm/answer",
+    "/api/humex/chat",
     "/api/context/upload",
     "/api/practice/verify",
 })
