@@ -7,10 +7,12 @@
 from __future__ import annotations
 
 import threading
+import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
-from flask import Blueprint, current_app, jsonify, request
+from flask import Blueprint, current_app, g, jsonify, request
 
+from backend import training_store
 from backend.humex.config import load_settings
 from backend.humex.model import get_client
 from backend.security.guard import prompt_guard
@@ -72,7 +74,9 @@ def chat():
     try:
         result = get_coach(get_client()).respond(data["message"], data["history"],
                                                  language=data["language"], subject=data["subject"])
-        return jsonify({**result.to_dict(), "status": "ok"})
+        reply = {**result.to_dict(), "status": "ok"}
+        reply["example_id"] = _remember_for_training(data, reply)
+        return jsonify(reply)
     except ModelUnavailable as exc:
         return jsonify({"error": exc.public_message, "status": "model_unavailable"}), 503
     except Exception:
@@ -80,6 +84,31 @@ def chat():
         return jsonify({"error": "Humo hit an unexpected error."}), 500
     finally:
         _slots.release()
+
+
+def _remember_for_training(data: Dict[str, Any], reply: Dict[str, Any]) -> Optional[str]:
+    """Save a signed-in learner's turn so Humo can learn from real conversations in the next training round.
+    The id is made here and the save runs in the background, so the spoken reply is never delayed by it."""
+    user = getattr(g, "user", None) or {}
+    if not user.get("id") or not training_store.enabled() or not training_store.humex_turn_is_learnable(reply):
+        return None
+    example_id = str(uuid.uuid4())
+    threading.Thread(target=training_store.save_humex_turn, daemon=True,
+                     args=(user["id"], data["message"], data["history"], reply, data["language"],
+                           bool(reply.get("coding")), example_id)).start()
+    return example_id
+
+
+@humex_bp.post("/feedback")
+def feedback():
+    """The learner's thumbs up/down on one of Humo's replies; 'unhelpful' keeps that turn out of training."""
+    body = request.get_json(silent=True) or {}
+    example_id = sanitize_input_text(str(body.get("example_id", "")), max_length=64)
+    rating = str(body.get("rating", "")).strip().lower()
+    if rating not in ("helpful", "unhelpful") or not example_id:
+        return jsonify({"error": "Send example_id and rating ('helpful' or 'unhelpful')."}), 400
+    user = getattr(g, "user", None) or {}
+    return jsonify({"saved": training_store.rate_example(user.get("id"), example_id, rating)})
 
 
 @humex_bp.get("/health")

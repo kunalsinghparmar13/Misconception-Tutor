@@ -58,9 +58,10 @@ _ANOTHER_WAY = re.compile(r"\b(another|other|different|new|alternative)\s+(way|m
                           r"दूसरा तरीका|और तरीका|अलग तरीका", re.IGNORECASE)
 _GIVE_UP = re.compile(r"\b(just tell me|(give|show|send|tell) me the ((fixed|correct|right|working|full|complete|whole|"
                       r"final) )?(answer|code|solution|version|program)|tell me the answer|what'?s the answer|"
-                      r"write (the|my|this) (code|program|function)|write it for me|solve it for me|"
+                      r"write (the|my|this) ((correct|fixed|right|working|whole|full|complete) )?(code|program|function)|write it for me|solve it for me|"
                       r"(fix|solve|do|correct) (it|this|that|my code|the code) for me|just (fix|solve|do) (it|this)|"
-                      r"i give up|i'?m stuck|i don'?t know)\b|उत्तर बताओ|जवाब बताओ|कोड दो", re.I)
+                      r"just (solve|work out|calculate|answer)\b|(solve|work out|calculate|do) .{1,40} for me|"
+                      r"work it out for me|i give up|i'?m stuck|i don'?t know)\b|उत्तर बताओ|जवाब बताओ|कोड दो", re.I)
 # The learner describes how they intend to solve it and asks whether that works.
 _PLAN = re.compile(r"\b(my plan|my approach|my idea|my method|i'?ll |i will |i'?m going to|i am going to|i plan to|"
                    r"i want to use|i'?d use|will (that|this|it) work|would (that|this|it) work|"
@@ -83,6 +84,7 @@ class HumexReply:
     hint_level: int = 1
     focus: str = "start"
     kind: str = "general"
+    coding: bool = False
     seconds: float = 0.0
     model: str = ""
 
@@ -263,24 +265,16 @@ class HumexCoach:
         history = clean_history(history or [])
         language = language if language in LANGUAGES else "en"
         problem = _problem_text(history, message)
-        g = gr.ground(problem, subject)
+        g = gr.ground(style.spoken_to_math(problem), subject)   # voice: 'times', 'equal to', number words
         coding = is_coding(g, problem, subject)
         focus = turn_focus(message, history, g)
         level = min(3, hint_level(history) + 1) if focus == "stuck" else hint_level(history)
         facts = g.facts_block().replace("Verified facts", "Private facts") or "Private facts: none for this message."
-        focus_text = HUMEX_FOCUS[focus]
         mistake = style.name_mistake(g, language) if focus == "wrong" else None
-        if mistake:
-            focus_text += f" Start by kindly saying it is not right yet and name the mistake, like: \"{mistake}\""
-        method = None
-        if focus == "another_way":
-            method = style.pick_method(style.problem_kind(g, problem, coding), history, message)
-            focus_text += f" Use this different method: {method}"
-        if coding:
-            focus_text += " This is a programming question: ideas in words, no code."
+        method = style.pick_method(style.problem_kind(g, problem, coding), history, message) if focus == "another_way" else None
 
         # 1. Coach draft
-        system = HUMEX_COACH.format(language_rule=LANGUAGES[language], hint_level=HUMEX_HINT_LEVELS[level], focus=focus_text)
+        system = coach_system_prompt(focus, level, language, coding, mistake=mistake, method=method)
         convo = history + [{"role": "user", "content": f"{message}\n\n{facts}"}]
         draft_res = self.client.chat([{"role": "system", "content": system}] + convo, max_tokens=220, temperature=0.4)
         draft_raw = trim_run_on(draft_res.text)   # a reply that ran on wrote the learner's next turn itself
@@ -330,8 +324,32 @@ class HumexCoach:
             issues += changes
             final_checks = check_reply(reply, g, problem, coding)
 
-        return HumexReply(reply=reply, verdict=verdict, issues=issues, checks=final_checks, hint_level=level, focus=focus,
+        return HumexReply(reply=reply, verdict=verdict, issues=issues, checks=final_checks, hint_level=level, focus=focus, coding=coding,
                           kind=g.kind, seconds=round(time.time() - started, 2), model=draft_res.model)
+
+
+def coach_system_prompt(focus: str, hint_level: int, language: str = "en", coding: bool = False,
+                        mistake: Optional[str] = None, method: Optional[str] = None) -> str:
+    """Humo's coach instructions for one turn. Shared by the app, the training-data export and the dataset builder,
+    so the model is trained on exactly the prompt it sees when it talks to learners."""
+    focus_text = HUMEX_FOCUS.get(focus, HUMEX_FOCUS["continue"])
+    if mistake:
+        focus_text += f" Start by kindly saying it is not right yet and name the mistake, like: \"{mistake}\""
+    if method:
+        focus_text += f" Use this different method: {method}"
+    if coding:
+        focus_text += " This is a programming question, so explain ideas in words and write no code."
+    return HUMEX_COACH.format(language_rule=LANGUAGES.get(language, LANGUAGES["en"]),
+                              hint_level=HUMEX_HINT_LEVELS.get(hint_level, HUMEX_HINT_LEVELS[1]), focus=focus_text)
+
+
+def training_messages(record: Dict[str, object], reply: str) -> List[Message]:
+    """A saved Humo turn (backend/training_store.humex_record) as one chat-format training example."""
+    history = clean_history(list(record.get("history") or []))   # type: ignore[arg-type]
+    system = coach_system_prompt(str(record.get("focus") or "continue"), int(record.get("hint_level") or 1),
+                                 str(record.get("language") or "en"), bool(record.get("coding")))
+    return ([{"role": "system", "content": system}] + history
+            + [{"role": "user", "content": str(record.get("message", ""))}, {"role": "assistant", "content": reply}])
 
 
 def get_coach(client: Optional[ModelClient] = None) -> HumexCoach:
@@ -342,4 +360,5 @@ def get_coach(client: Optional[ModelClient] = None) -> HumexCoach:
     return HumexCoach(client)
 
 
-__all__ = ["HumexCoach", "HumexReply", "check_reply", "fallback_hint", "get_coach", "is_coding", "turn_focus"]
+__all__ = ["HumexCoach", "HumexReply", "check_reply", "coach_system_prompt", "fallback_hint", "get_coach", "is_coding",
+           "training_messages", "turn_focus"]

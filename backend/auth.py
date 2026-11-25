@@ -29,6 +29,7 @@ PROTECTED_PREFIXES = (
     "/api/tutor",
     "/api/llm/answer",
     "/api/humex/chat",  # /api/humex/health stays public so the page can show the model status
+    "/api/humex/feedback",
     "/api/llm/feedback",
     "/api/practice/",
     "/api/python/debug",

@@ -112,3 +112,64 @@ def rate_example(user_id: Optional[str], example_id: str, rating: str) -> bool:
     except (requests.RequestException, ValueError) as exc:
         log.warning("rating not saved: %s", exc)
         return False
+
+
+# ---------------------------------------------------------------------------------------- Humex (Humo) turns
+# Humo learns from real conversations in scheduled training rounds (never live): each turn is stored here, then
+# scripts/export_user_training_data.py turns the safe ones into training rows in the exact prompt format Humo uses.
+HUMEX_SUBJECT = "humex"
+_QUESTION_LIMIT = 4000   # the table's question column limit
+
+
+def humex_record(message: str, history: list, result: Dict[str, Any], language: str, coding: bool) -> str:
+    """The conversation context as compact JSON, trimmed (oldest turns first) to fit the question column."""
+    import json
+
+    turns = [{"role": t.get("role"), "content": str(t.get("content", ""))[:1200]}
+             for t in (history or []) if t.get("role") in ("user", "assistant")][-6:]
+    record = {"humex": 1, "message": message[:1600], "history": turns, "focus": result.get("focus"),
+              "hint_level": result.get("hint_level"), "kind": result.get("kind"), "language": language,
+              "coding": bool(coding)}
+    text = json.dumps(record, ensure_ascii=False)
+    while len(text) > _QUESTION_LIMIT and record["history"]:
+        record["history"].pop(0)
+        text = json.dumps(record, ensure_ascii=False)
+    return text[:_QUESTION_LIMIT]
+
+
+def humex_turn_is_learnable(result: Dict[str, Any]) -> bool:
+    """Only turns where every exact check passed (no answer, no code leaked) and the reply came from the model
+    (not the built-in safety-net fallback) are worth learning from."""
+    checks = result.get("checks") or []
+    return (result.get("verdict") in ("PASS", "REVISED") and bool(result.get("reply"))
+            and all(c.get("ok") for c in checks if c.get("name") in ("no_answer_leak", "no_answer_phrase", "no_full_code")))
+
+
+def save_humex_turn(user_id: Optional[str], message: str, history: list, result: Dict[str, Any],
+                    language: str = "en", coding: bool = False, example_id: Optional[str] = None) -> Optional[str]:
+    """Store one Humo turn for later training. Returns the example id (for the learner's thumbs up/down) or None.
+    ``example_id`` lets the caller hand the id to the learner before this (slow, network) save finishes."""
+    if not enabled() or not user_id or not humex_turn_is_learnable(result):
+        return None
+    row = {
+        **({"id": example_id} if example_id else {}),
+        "user_id": user_id,
+        "subject": HUMEX_SUBJECT,
+        "question": humex_record(message, history, result, language, coding),
+        "answer": str(result.get("reply", ""))[:20000],
+        "misconception": result.get("focus"),
+        "grounding_kind": result.get("kind"),
+        "student_correct": True if result.get("focus") == "right" else (False if result.get("focus") == "wrong" else None),
+        "approved": True,
+        "verified": True,   # every exact leak check passed (humex_turn_is_learnable)
+        "model": (str(result.get("model") or "")[:200] or None),
+    }
+    try:
+        res = requests.post(f"{auth.supabase_url()}/rest/v1/{TABLE}", json=row, headers=_headers(), timeout=_TIMEOUT)
+        if res.status_code in (200, 201):
+            body = res.json()
+            return (body[0] if isinstance(body, list) and body else body).get("id")
+        log.warning("humex turn not saved: HTTP %s %s", res.status_code, res.text[:200])
+    except (requests.RequestException, ValueError) as exc:
+        log.warning("humex turn not saved: %s", exc)
+    return None

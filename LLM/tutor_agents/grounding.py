@@ -204,7 +204,7 @@ _ARITH_CLAIM = re.compile(
     r"(?P<expr>(?:\(?\s*-?\d[\d.,]*\s*\)?\s*[+\-*/×÷^x]\s*)+\(?\s*-?\d[\d.,]*\s*\)?(?:\s*[+\-*/×÷^x]\s*\(?\s*-?\d[\d.,]*\s*\)?)*)\s*=\s*(?P<ans>-?\d[\d.,]*(?:\s*/\s*\d+)?)"
 )
 _ARITH_ASK = re.compile(
-    r"(?:what\s+is|calculate|compute|evaluate|simplify|find)\s+(?P<expr>[\d\s.,+\-*/×÷^()xX]*\d[\d\s.,+\-*/×÷^()xX]*)\??",
+    r"(?:what\s+is|calculate|compute|evaluate|simplify|find|solve|work\s+out)\s+(?P<expr>[\d\s.,+\-*/×÷^()xX]*\d[\d\s.,+\-*/×÷^()xX]*)\??",
     re.IGNORECASE,
 )
 _EQUATION = re.compile(r"(?P<lhs>[\dx\s.+\-*/()^]*x[\dx\s.+\-*/()^]*|[\d\s.+\-*/()^]+)\s*=\s*(?P<rhs>[\dx\s.+\-*/()^]+)", re.IGNORECASE)
@@ -256,6 +256,9 @@ def _ground(question: str, subject: str) -> Grounding:
                 student = None
                 after = question[m.end():]
                 sm = _AFTER_EQ.search(after)
+                if not sm:   # "I got 5/6 for 1/2 + 1/3": the answer can come before the problem too
+                    before = list(_AFTER_EQ.finditer(question[:m.start()]))
+                    sm = before[-1] if before else None
                 if sm:
                     student = parse_number(sm.group(1))
                 if student is not None:

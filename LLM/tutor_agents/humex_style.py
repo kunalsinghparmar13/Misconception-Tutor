@@ -200,3 +200,39 @@ def shape(reply: str, focus: str, g: gr.Grounding, message: str, language: str =
     if not opener:
         return reply.strip(), []
     return f"{opener} {reply.strip()}".strip(), [change]
+
+
+# ------------------------------------------------------------------ 4. spoken maths -> symbols, for the exact checks
+
+# Humex is voice-first: learners say "is 34 times 5 equal to 160", which the exact maths checks can't read. Converting
+# it to "is 34 * 5 = 160" lets Humo know the answer is wrong (and keeps the answer-leak check working). Only used to
+# ground the problem; the learner's own words are what the model reads.
+_UNITS = {w: i for i, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve thirteen "
+                                     "fourteen fifteen sixteen seventeen eighteen nineteen".split())}
+_TENS = {w: 10 * i for i, w in enumerate("_ _ twenty thirty forty fifty sixty seventy eighty ninety".split()) if w != "_"}
+_NUMBER_WORDS = re.compile(r"\b(?:(?:%s)(?:[\s-](?:%s))?|(?:%s)|(?:a|one) hundred)\b" % (
+    "|".join(_TENS), "|".join(list(_UNITS)[1:10]), "|".join(_UNITS)), re.IGNORECASE)
+_SPOKEN_OPS = [
+    (r"\b(multiplied by|times)\b", " * "),
+    (r"\bdivided by\b", " ÷ "),
+    (r"\b(plus|added to)\b", " + "),
+    (r"\b(minus|take away|subtract(ed)?)\b", " - "),
+    (r"\b(?<=\d)\s*over\s*(?=\d)", "/"),            # "3 over 4" -> 3/4
+    (r"\b(is equal to|equal to|equals|makes)\b", " = "),
+    (r"\b(\d+)\s*percent\b", r"\1%"),
+]
+
+
+def _number_word(m: "re.Match[str]") -> str:
+    words = m.group(0).lower().replace("-", " ").split()
+    if words[-1] == "hundred":
+        return "100"
+    return str(sum(_TENS.get(w, _UNITS.get(w, 0)) for w in words))
+
+
+def spoken_to_math(text: str) -> str:
+    """'Is thirty four times five equal to one hundred sixty?' -> 'Is 34 * 5 = 100 60?' style symbols for the checks."""
+    out = _NUMBER_WORDS.sub(_number_word, text or "")
+    for pattern, repl in _SPOKEN_OPS:
+        out = re.sub(pattern, repl, out, flags=re.IGNORECASE)
+    return re.sub(r"[ \t]{2,}", " ", out)

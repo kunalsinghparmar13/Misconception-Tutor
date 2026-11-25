@@ -117,3 +117,49 @@ def test_a_hint_that_only_repeats_the_question_is_replaced():
     assert out.verdict == "FALLBACK"
     assert "repeated the learner's question" in " ".join(out.issues)
     assert out.reply != "What is 2/4 + 1/2?"
+
+
+# ---------------------------------------------------------------- 4. spoken maths (Humex is voice-first)
+
+@pytest.mark.parametrize("spoken, written", [
+    ("Is 34 times 5 equal to 160?", "Is 34 * 5 = 160?"),
+    ("what is twelve times seven", "what is 12 * 7"),
+    ("Is twenty-three times four equal to ninety-two?", "Is 23 * 4 = 92?"),
+    ("three over four plus one over four equals one", "3/4 + 1/4 = 1"),
+    ("what is 20 percent of 80", "what is 20% of 80"),
+])
+def test_spoken_maths_becomes_symbols(spoken, written):
+    assert style.spoken_to_math(spoken).strip() == written
+
+
+def test_a_spoken_wrong_answer_is_caught_and_its_answer_never_said():
+    out = HumexCoach(fake_model("The answer is 170, does that help?")).respond("Is 34 times 5 equal to 160?")
+    assert out.focus == "wrong" and "170" not in out.reply
+    assert "160 isn't right yet" in out.reply
+
+
+def test_a_spoken_correct_answer_is_praised():
+    out = HumexCoach(fake_model("Yes, that's right! How did you work it out?")).respond(
+        "Is twenty-three times four equal to ninety-two?")
+    assert out.focus == "right" and out.reply.startswith("Yes, that's right!")
+
+
+@pytest.mark.parametrize("message", ["Please just solve 34 * 5 for me", "Can you work it out for me?",
+                                     "Just calculate 12 * 9", "Do 1/3 + 1/4 for me please"])
+def test_more_ways_of_asking_for_the_answer_are_recognised(message):
+    from tutor_agents.humex import turn_focus
+    assert turn_focus(message, [], gr.ground(style.spoken_to_math(message))) == "stuck"
+
+
+def test_solve_requests_are_grounded_so_the_answer_is_protected():
+    assert gr.ground("Please just solve 34 * 5 for me").verified_answer == "170"
+
+
+@pytest.mark.parametrize("message, correct", [("I got 5/6 for 1/2 + 1/3", True), ("I got 2/5 for 1/2 + 1/3", False)])
+def test_an_answer_given_before_the_problem_is_checked(message, correct):
+    assert gr.ground(message).student_correct is correct
+
+
+def test_asking_for_the_correct_code_counts_as_stuck():
+    from tutor_agents.humex import turn_focus
+    assert turn_focus("Can you write the correct code? It says NameError", [], gr.ground("x")) == "stuck"

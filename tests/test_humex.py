@@ -147,8 +147,8 @@ def capture_system():
 
 
 @pytest.mark.parametrize("message, expected_focus, prompt_text", [
-    ("What is 1/4 + 1/6? I got 2/10", "wrong", "NOT correct"),
-    ("I think 1/4 + 1/6 = 5/12", "right", "correct. Confirm"),
+    ("What is 1/4 + 1/6? I got 2/10", "wrong", "answer or method is wrong"),
+    ("I think 1/4 + 1/6 = 5/12", "right", "is correct. Tell them so"),
     ("Can you show me another way to do 1/4 + 1/6?", "another_way", "different way"),
     ("Just give me the answer to 1/4 + 1/6", "stuck", "smaller one"),
 ])

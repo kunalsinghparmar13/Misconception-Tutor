@@ -25,6 +25,7 @@ import requests
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "LLM"))   # tutor_agents: Humo's prompt, so Humex turns train on the exact runtime format
 
 from backend import auth  # noqa: E402
 from backend.training_store import TABLE, _MISTAKE_CLAIM  # noqa: E402
@@ -74,6 +75,21 @@ def keep(row: dict) -> tuple[bool, str]:
         return False, "too short"
     if row.get("student_correct") is True and _MISTAKE_CLAIM.search(a):
         return False, "told a correct learner they were wrong"
+    if (row.get("subject") or "") == "humex":
+        return humex_ok(row)
+    return True, ""
+
+
+def humex_ok(row: dict) -> tuple[bool, str]:
+    """Extra rules for Humo turns: a readable record, and a reply that still asks the learner a question."""
+    try:
+        record = json.loads(row.get("question") or "")
+    except ValueError:
+        return False, "unreadable humex record"
+    if not isinstance(record, dict) or record.get("humex") != 1 or not record.get("message"):
+        return False, "unreadable humex record"
+    if "?" not in (row.get("answer") or ""):
+        return False, "humex reply asks no question"
     return True, ""
 
 
@@ -82,6 +98,11 @@ def normalise(text: str) -> str:
 
 
 def to_training_row(row: dict) -> dict:
+    if (row.get("subject") or "") == "humex":   # a Humo conversation turn (backend/training_store.save_humex_turn)
+        from tutor_agents.humex import training_messages
+        record = json.loads(row["question"])
+        return {"messages": training_messages(record, row["answer"].strip()), "source": "humex-conversations",
+                "subject": "humex"}
     return {
         "messages": [
             {"role": "user", "content": row["question"].strip()},
@@ -110,7 +131,8 @@ def main(argv=None) -> int:
     for row in rows:
         ok, why = keep(row)
         if ok:
-            k = normalise(row["question"])
+            k = normalise(row["question"] + " || " + (row.get("answer") or "")) if row.get("subject") == "humex" \
+                else normalise(row["question"])
             if k in seen:
                 ok, why = False, "duplicate question"
             seen.add(k)

@@ -6,3 +6,4 @@ button,select{font:inherit;cursor:pointer;border:1px solid #cbd2c4;border-radius
 
 .studio-footer { flex-wrap: wrap; }
 .messages article small.reviewed{display:block;margin-top:6px;font:500 11px system-ui;color:#4d6b57}
+.messages article .feedback{display:inline-flex;gap:6px;margin-top:6px}.messages article .feedback button{padding:2px 8px;font-size:13px;border-radius:999px;background:transparent}.messages article .feedback button.chosen{background:#21463d;color:#fff;opacity:1}

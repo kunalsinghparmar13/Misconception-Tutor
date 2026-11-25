@@ -100,7 +100,7 @@ function speak(text) {
   update();
 }
 
-function add(who, text, note) {
+function add(who, text, note, exampleId) {
   const entry = document.createElement('article');
   const label = document.createElement('b');
   const body = document.createElement('p');
@@ -114,9 +114,35 @@ function add(who, text, note) {
     tag.textContent = note;
     entry.append(tag);
   }
+  if (exampleId) entry.append(feedbackButtons(exampleId));
   messages.append(entry);
   messages.scrollTop = messages.scrollHeight;
   history.push({role: who === 'You' ? 'user' : 'assistant', content: text});
+}
+
+// Thumbs up/down on a reply. Humo learns from real conversations in later training rounds; a thumbs-down keeps
+// that turn out of the training data.
+function feedbackButtons(exampleId) {
+  const row = document.createElement('span');
+  row.className = 'feedback';
+  for (const [rating, label, title] of [['helpful', '👍', 'This hint helped'], ['unhelpful', '👎', 'This hint did not help']]) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = label;
+    button.title = title;
+    button.setAttribute('aria-label', title);
+    button.onclick = async () => {
+      for (const b of row.querySelectorAll('button')) b.disabled = true;
+      button.classList.add('chosen');
+      try {
+        const request = window.tutorAuth?.apiFetch || window.fetch.bind(window);
+        await request('/api/humex/feedback', {method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({example_id: exampleId, rating})});
+      } catch { /* feedback is optional; never interrupt the conversation */ }
+    };
+    row.append(button);
+  }
+  return row;
 }
 
 // What the reviewer did with Humo's draft, shown under the reply.
@@ -156,7 +182,7 @@ async function send(text) {
   pending = true;
   el('notice').textContent = '';
   update();
-  let reply, note = '';
+  let reply, note = '', exampleId = null;
   try {
     const request = window.tutorAuth?.apiFetch || window.fetch.bind(window);
     // Humo only gives hints and guiding questions; the server's reviewer checks every reply before it is spoken.
@@ -170,13 +196,14 @@ async function send(text) {
     if (!response.ok || typeof data.reply !== 'string' || !data.reply.trim()) throw new Error();
     reply = data.reply;
     note = reviewNote(data.review);
+    exampleId = data.example_id || null;
     puzzle = false;
   } catch {
     reply = guided(text);
     el('notice').textContent = 'Guided demo · Live tutor unavailable';
   }
   pending = false;
-  add('Humo', reply, note);
+  add('Humo', reply, note, exampleId);
   speak(reply);
 }
 document.querySelector('form').onsubmit = event => { event.preventDefault(); warmUp(); send(field.value); };
