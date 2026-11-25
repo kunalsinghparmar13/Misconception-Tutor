@@ -22,6 +22,7 @@ from typing import Dict, List, Optional
 
 from . import grounding as gr
 from .backends import trim_run_on
+from . import humex_style as style
 from .model_client import ModelClient
 from .prompts import HUMEX_COACH, HUMEX_FOCUS, HUMEX_HINT_LEVELS, HUMEX_REVIEWER
 
@@ -205,9 +206,12 @@ def _blocking(checks: List[HumexCheck]) -> List[HumexCheck]:
     return [c for c in checks if not c.ok and c.name in {"no_answer_leak", "no_answer_phrase", "no_full_code"}]
 
 
-def fallback_hint(g: gr.Grounding, language: str, coding: bool = False) -> str:
-    """A safe hint that cannot leak anything, used only when every model reply leaked the answer."""
+def fallback_hint(g: gr.Grounding, language: str, coding: bool = False, problem: str = "") -> str:
+    """A safe hint that cannot leak anything, used when every model reply leaked the answer or only repeated the question."""
     hi = language == "hi"
+    if not coding and ("%" in problem or "percent" in problem.lower()):
+        return ("प्रतिशत का मतलब है 'सौ में से'। उस संख्या का 10% कितना होगा, और उससे आगे कैसे बढ़ोगे?" if hi else
+                "Percent means out of a hundred. What is 10% of that number, and how could you build up from there?")
     if coding and g.kind != "python":
         return ("कोड लिखने से पहले, शब्दों में बताओ: प्रोग्राम को क्या लेना है, क्या करना है, और क्या दिखाना है?" if hi else
                 "Before any code, say it in words: what does the program take in, what must it do, and what should it show?")
@@ -264,11 +268,19 @@ class HumexCoach:
         focus = turn_focus(message, history, g)
         level = min(3, hint_level(history) + 1) if focus == "stuck" else hint_level(history)
         facts = g.facts_block().replace("Verified facts", "Private facts") or "Private facts: none for this message."
+        focus_text = HUMEX_FOCUS[focus]
+        mistake = style.name_mistake(g, language) if focus == "wrong" else None
+        if mistake:
+            focus_text += f" Start by kindly saying it is not right yet and name the mistake, like: \"{mistake}\""
+        method = None
+        if focus == "another_way":
+            method = style.pick_method(style.problem_kind(g, problem, coding), history, message)
+            focus_text += f" Use this different method: {method}"
+        if coding:
+            focus_text += " This is a programming question: ideas in words, no code."
 
         # 1. Coach draft
-        system = HUMEX_COACH.format(language_rule=LANGUAGES[language], hint_level=HUMEX_HINT_LEVELS[level],
-                                    focus=HUMEX_FOCUS[focus] + (" This is a programming question: ideas in words, no code."
-                                                                 if coding else ""))
+        system = HUMEX_COACH.format(language_rule=LANGUAGES[language], hint_level=HUMEX_HINT_LEVELS[level], focus=focus_text)
         convo = history + [{"role": "user", "content": f"{message}\n\n{facts}"}]
         draft_res = self.client.chat([{"role": "system", "content": system}] + convo, max_tokens=220, temperature=0.4)
         draft_raw = trim_run_on(draft_res.text)   # a reply that ran on wrote the learner's next turn itself
@@ -302,10 +314,20 @@ class HumexCoach:
             if candidate and not _blocking(check_reply(candidate, g, problem, coding, raw=better_raw)):
                 reply, verdict = candidate, "REVISED"
 
-        # 3. Safety net: the learner must never hear the answer
+        # 3. Safety net: the learner must never hear the answer, and a hint that only repeats their question is useless
         final_checks = check_reply(reply, g, problem, coding, raw=draft_raw if reply == draft else None)
-        if _blocking(final_checks):
-            reply, verdict = fallback_hint(g, language, coding), "FALLBACK"
+        if _blocking(final_checks) or style.repeats_question(reply, message):
+            if style.repeats_question(reply, message):
+                issues.append("only repeated the learner's question")
+            reply, verdict = fallback_hint(g, language, coding, problem), "FALLBACK"
+            final_checks = check_reply(reply, g, problem, coding)
+
+        # 4. Say what the small model tends to leave out: that a wrong answer is wrong (and which mistake), a truly
+        #    different method when asked, and a warm opener for very short replies. Exact text, never the answer.
+        shaped, changes = style.shape(reply, focus, g, message, language, method)
+        if changes and not _blocking(check_reply(shaped, g, problem, coding)):
+            reply = shaped
+            issues += changes
             final_checks = check_reply(reply, g, problem, coding)
 
         return HumexReply(reply=reply, verdict=verdict, issues=issues, checks=final_checks, hint_level=level, focus=focus,

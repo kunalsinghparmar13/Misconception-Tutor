@@ -26,7 +26,9 @@ def test_good_hint_passes_review_unchanged():
     client, calls = fake_model("Nice try! Can 4 and 6 both divide into a smaller shared number? Which one?")
     out = HumexCoach(client).respond(QUESTION)
     assert out.verdict == "PASS"
-    assert out.reply.startswith("Nice try!")
+    # 2/10 is the known 'add tops and bottoms' mistake, so it is named in place of the bare "Nice try!"
+    assert out.reply.startswith("Not quite. It looks like you added the tops together and the bottoms together.")
+    assert out.reply.endswith("Can 4 and 6 both divide into a smaller shared number? Which one?")
     assert calls == ["coach", "reviewer"]   # every reply is reviewed before it is spoken
 
 
@@ -204,7 +206,9 @@ def test_reply_that_runs_on_into_invented_turns_is_cut():
     client, _ = fake_model("What number could both 4 and 6 divide into?\nuser\nI don't know\nassistant\nIt is 12, so 5/12.")
     out = HumexCoach(client).respond(QUESTION)
     assert out.verdict == "PASS"
-    assert out.reply == "What number could both 4 and 6 divide into?"
+    # the invented turns are gone; the wrong answer is named first (2/10 is adding tops and bottoms)
+    assert out.reply.endswith("What number could both 4 and 6 divide into?")
+    assert "5/12" not in out.reply and "\nuser" not in out.reply
 
 
 def test_confirming_a_correct_answer_is_not_blocked():
