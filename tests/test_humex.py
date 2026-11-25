@@ -4,7 +4,7 @@ import pytest
 
 from backend.api import app
 from tutor_agents import ModelClient, ModelUnavailable, TutorPipeline, set_pipeline
-from tutor_agents.humex import HumexCoach, check_reply, hint_level
+from tutor_agents.humex import HumexCoach, check_reply, hint_level, turn_focus
 from tutor_agents import grounding as gr
 
 QUESTION = "What is 1/4 + 1/6? I got 2/10"   # exact answer 5/12, the learner added across
@@ -196,3 +196,68 @@ def test_python_falls_back_to_a_words_only_hint_when_every_reply_has_code():
     client, _ = fake_model("Use `sum(nums)`. Ok?", "Verdict: FAIL\nIssues: code\nBetter reply: Write `total = sum(nums)`?")
     out = HumexCoach(client).respond("How do I add up all the numbers in a list in Python?")
     assert out.verdict == "FALLBACK" and "`" not in out.reply and "(" not in out.reply
+
+
+# ---------------------------------------------------------------- fixes found by the 200-question test (2026-11-25)
+
+def test_reply_that_runs_on_into_invented_turns_is_cut():
+    client, _ = fake_model("What number could both 4 and 6 divide into?\nuser\nI don't know\nassistant\nIt is 12, so 5/12.")
+    out = HumexCoach(client).respond(QUESTION)
+    assert out.verdict == "PASS"
+    assert out.reply == "What number could both 4 and 6 divide into?"
+
+
+def test_confirming_a_correct_answer_is_not_blocked():
+    # "your answer is correct" used to trip the answer-phrase check and swap in an unrelated hint
+    client, _ = fake_model("That is correct! Can you explain why your answer is correct?")
+    out = HumexCoach(client).respond("Solve 4x - 5 = 15. I got x = 5")
+    assert out.focus == "right" and out.verdict == "PASS"
+    assert out.reply.startswith("That is correct!")
+
+
+@pytest.mark.parametrize("reply, blocked", [
+    ("The answer is 5/12. See?", True),
+    ("Final answer: 5/12?", True),
+    ("What is your final answer?", False),
+    ("The answer is to find a common denominator first. Which one?", False),
+])
+def test_answer_phrases_only_count_when_they_state_a_value(reply, blocked):
+    g = gr.ground("What is 1/4 + 1/6?")
+    ok = {c.name: c.ok for c in check_reply(reply, g, "What is 1/4 + 1/6?")}["no_answer_phrase"]
+    assert ok is (not blocked)
+
+
+def test_quoting_the_learners_own_code_is_allowed():
+    learner = "I want to count vowels in Python. My plan: I'll use word.count('aeiou'). Will that work?"
+    client, _ = fake_model("What does word.count('aeiou') actually count? Try it on 'banana'. What do you get?")
+    out = HumexCoach(client).respond(learner)
+    assert out.verdict == "PASS" and "word.count('aeiou')" in out.reply
+
+
+def test_new_code_is_still_blocked_even_next_to_quoted_code():
+    g = gr.ground("x")
+    learner = "My plan: I'll use word.count('aeiou')."
+    checks = {c.name: c.ok for c in check_reply("Instead of word.count('aeiou'), use sum(nums)?", g, learner, coding=True)}
+    assert checks["no_full_code"] is False
+
+
+@pytest.mark.parametrize("message", [
+    "Just give me the fixed code please",
+    "Can you fix it for me?",
+    "Show me the correct code",
+    "Write the code for me, I'm tired",
+])
+def test_demands_for_the_code_are_recognised(message):
+    assert turn_focus(message, [], gr.ground(message)) == "stuck"
+
+
+@pytest.mark.parametrize("message", [
+    "I want to reverse a list. My plan: I'll loop backwards. Will that work?",
+    "I'll check if n % 2 == 1, then it's prime. Is that right?",
+    "My approach is to use a dictionary to count words. Is that a good approach?",
+])
+def test_a_learners_plan_gets_checked(message):
+    client, seen = capture_system()
+    out = HumexCoach(client).respond(message)
+    assert out.focus == "check_plan"
+    assert "described a plan" in seen["system"]

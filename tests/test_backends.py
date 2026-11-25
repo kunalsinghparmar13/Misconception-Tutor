@@ -75,3 +75,19 @@ def test_repo_humex_folder_is_a_loadable_qwen_adapter():
     for name in ("adapter_config.json", "tokenizer_config.json", "tokenizer.json", "chat_template.jinja"):
         assert (humex / name).exists(), name
     assert "enable_thinking" in (humex / "chat_template.jinja").read_text()
+
+
+def test_run_on_turns_are_trimmed():
+    assert b.trim_run_on("Which denominator?\nuser\nno idea\nassistant\n12") == "Which denominator?"
+    assert b.trim_run_on("Which one?<|im_end|>\n<|im_start|>user") == "Which one?"
+    assert b.trim_run_on("Think about the user of this program. Who is it for?") == \
+        "Think about the user of this program. Who is it for?"   # the word 'user' inside a sentence stays
+
+
+def test_generation_stops_at_the_end_of_turn_marker():
+    class Tok:
+        eos_token_id = 2
+        unk_token_id = 0
+        def convert_tokens_to_ids(self, token):
+            return {"<|im_end|>": 7, "<|endoftext|>": 2}.get(token, 0)
+    assert b.stop_token_ids(Tok()) == [2, 7]

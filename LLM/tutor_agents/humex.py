@@ -21,6 +21,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Dict, List, Optional
 
 from . import grounding as gr
+from .backends import trim_run_on
 from .model_client import ModelClient
 from .prompts import HUMEX_COACH, HUMEX_FOCUS, HUMEX_HINT_LEVELS, HUMEX_REVIEWER
 
@@ -33,8 +34,12 @@ LANGUAGES = {
     "en": "Reply in simple English.",
 }
 
+# Phrases that hand over a result: "final answer / the answer is / answer = / the solution is / it equals" followed by an
+# actual value (a number, x = ..., code). "Your answer is correct", "what is your final answer?" or "the answer is to find
+# a common denominator" pass.
 _ANSWER_PHRASES = re.compile(
-    r"\b(final answer|the answer is|answer\s*(is|=|:)|the solution is|correct answer|so it equals|= *the answer)\b",
+    r"\b(final answer( is)?|the (correct |right )?answer is|answer\s*[=:]|the solution is|so it equals|the result is|"
+    r"it equals)\s*:?\s*(-?\d|[a-z]\s*=|`|\$)",
     re.IGNORECASE,
 )
 _CODE_BLOCK = re.compile(r"```(?:\w+)?\n?(.*?)```", re.DOTALL)
@@ -50,9 +55,15 @@ _CODING_WORDS = re.compile(r"\b(python|code|coding|program|function|loop|list|di
                            r"print|def|syntax|indent|traceback)\b", re.IGNORECASE)
 _ANOTHER_WAY = re.compile(r"\b(another|other|different|new|alternative)\s+(way|method|approach)|\bany other way\b|"
                           r"दूसरा तरीका|और तरीका|अलग तरीका", re.IGNORECASE)
-_GIVE_UP = re.compile(r"\b(just tell me|give me the (answer|code|solution)|tell me the answer|what'?s the answer|"
-                      r"show me the (answer|code|solution)|write the code|solve it for me|i give up|i'?m stuck|"
-                      r"i don'?t know)\b|उत्तर बताओ|जवाब बताओ", re.I)
+_GIVE_UP = re.compile(r"\b(just tell me|(give|show|send|tell) me the ((fixed|correct|right|working|full|complete|whole|"
+                      r"final) )?(answer|code|solution|version|program)|tell me the answer|what'?s the answer|"
+                      r"write (the|my|this) (code|program|function)|write it for me|solve it for me|"
+                      r"(fix|solve|do|correct) (it|this|that|my code|the code) for me|just (fix|solve|do) (it|this)|"
+                      r"i give up|i'?m stuck|i don'?t know)\b|उत्तर बताओ|जवाब बताओ|कोड दो", re.I)
+# The learner describes how they intend to solve it and asks whether that works.
+_PLAN = re.compile(r"\b(my plan|my approach|my idea|my method|i'?ll |i will |i'?m going to|i am going to|i plan to|"
+                   r"i want to use|i'?d use|will (that|this|it) work|would (that|this|it) work|"
+                   r"is (that|this) (right|a good|correct|ok|okay|the right))", re.I)
 
 
 @dataclass
@@ -120,19 +131,32 @@ def is_coding(g: gr.Grounding, learner_text: str, subject: str = "") -> bool:
     return g.is_code or subject.strip().lower() in {"python", "programming", "coding"} or bool(_CODING_WORDS.search(learner_text))
 
 
-def _code_in(raw: str, coding: bool) -> str:
-    """Describe any code in the reply ('' if none). In a coding chat even one line or `snippet` counts."""
-    blocks = [b for b in _CODE_BLOCK.findall(raw) if b.strip()]
+def _norm_code(text: str) -> str:
+    return re.sub(r"\s+", "", text or "")
+
+
+def _code_in(raw: str, coding: bool, learner_text: str = "") -> str:
+    """Describe any code in the reply ('' if none). In a coding chat even one line or `snippet` counts.
+    Code the learner wrote themselves may be quoted back ("what does word.count('aeiou') count?"): that hands
+    nothing over, so it is ignored."""
+    theirs = _norm_code(learner_text)
+
+    def new_code(snippet: str) -> bool:
+        code = _norm_code(snippet)
+        return bool(code) and code not in theirs
+
+    blocks = [b for b in _CODE_BLOCK.findall(raw) if b.strip() and new_code(b)]
     if blocks and (coding or any(len([ln for ln in b.splitlines() if ln.strip()]) >= 3 for b in blocks)):
         return "contains a code block"
     if coding:
         prose = _CODE_BLOCK.sub("", raw)
-        snippet = next((s for s in _INLINE_CODE.findall(prose) if re.search(r"[=(\[:]", s)), None)
+        snippet = next((s for s in _INLINE_CODE.findall(prose) if re.search(r"[=(\[:]", s) and new_code(s)), None)
         if snippet:
             return f"contains code `{snippet}`"
-        line = _CODE_LINE.search(prose) or _CALL.search(prose)
-        if line:
-            return f"contains code '{line.group(0).strip()[:40]}'"
+        for pattern in (_CODE_LINE, _CALL):
+            for m in pattern.finditer(prose):
+                if new_code(m.group(0)):
+                    return f"contains code '{m.group(0).strip()[:40]}'"
     return ""
 
 
@@ -146,10 +170,11 @@ def check_reply(reply: str, g: gr.Grounding, learner_text: str, coding: bool = F
     checks.append(HumexCheck("no_answer_leak", not leak,
                              f"says the answer {g.verified_answer}" if leak else ""))
 
-    phrase = _ANSWER_PHRASES.search(reply)
-    checks.append(HumexCheck("no_answer_phrase", phrase is None, f"uses '{phrase.group(0)}'" if phrase else ""))
+    # Once the learner has said the answer, confirming it ("yes, your answer is 5/12") reveals nothing.
+    phrase = None if learner_has_it else _ANSWER_PHRASES.search(reply)
+    checks.append(HumexCheck("no_answer_phrase", phrase is None, f"uses '{phrase.group(0).strip()}'" if phrase else ""))
 
-    code = _code_in(raw if raw is not None else reply, coding)
+    code = _code_in(raw if raw is not None else reply, coding, learner_text)
     checks.append(HumexCheck("no_full_code", not code, code))
 
     asks = "?" in reply or "？" in reply
@@ -170,6 +195,8 @@ def turn_focus(message: str, history: List[Message], g: gr.Grounding) -> str:
         return "wrong"
     if g.student_correct is True:
         return "right"
+    if _PLAN.search(message):
+        return "check_plan"
     return "continue" if any(t["role"] == "assistant" for t in history) else "start"
 
 
@@ -244,8 +271,9 @@ class HumexCoach:
                                                                  if coding else ""))
         convo = history + [{"role": "user", "content": f"{message}\n\n{facts}"}]
         draft_res = self.client.chat([{"role": "system", "content": system}] + convo, max_tokens=220, temperature=0.4)
-        draft = _spoken(draft_res.text)
-        checks = check_reply(draft, g, problem, coding, raw=draft_res.text)
+        draft_raw = trim_run_on(draft_res.text)   # a reply that ran on wrote the learner's next turn itself
+        draft = _spoken(draft_raw)
+        checks = check_reply(draft, g, problem, coding, raw=draft_raw)
 
         # 2. Reviewer: model critique with the exact check results, may rewrite the reply
         transcript = "\n".join(f"{'Learner' if t['role'] == 'user' else 'Humo'}: {t['content']}" for t in history[-6:])
@@ -269,12 +297,13 @@ class HumexCoach:
         reply, verdict = draft, "PASS"
         needs_fix = review["verdict"] == "FAIL" or bool(_blocking(checks))
         if needs_fix and review["better"]:
-            candidate = _spoken(review["better"])
-            if not _blocking(check_reply(candidate, g, problem, coding, raw=review["better"])):
+            better_raw = trim_run_on(review["better"])
+            candidate = _spoken(better_raw)
+            if candidate and not _blocking(check_reply(candidate, g, problem, coding, raw=better_raw)):
                 reply, verdict = candidate, "REVISED"
 
         # 3. Safety net: the learner must never hear the answer
-        final_checks = check_reply(reply, g, problem, coding, raw=draft_res.text if reply == draft else None)
+        final_checks = check_reply(reply, g, problem, coding, raw=draft_raw if reply == draft else None)
         if _blocking(final_checks):
             reply, verdict = fallback_hint(g, language, coding), "FALLBACK"
             final_checks = check_reply(reply, g, problem, coding)

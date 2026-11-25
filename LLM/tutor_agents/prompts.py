@@ -159,6 +159,9 @@ HUMEX_FOCUS = {
                    "discussed, as a hint only, and ask them to try its first step.",
     "stuck": "the learner is stuck or asked for the answer. Do not give it. Break the next step into a smaller one and ask "
              "them to do just that.",
+    "check_plan": "the learner described a plan. Judge it honestly: if it has a flaw, name the step that fails and why, "
+                  "with a tiny example that shows it, and ask how they could change it; if it is sound, say so and ask "
+                  "for their first step. Do not write code or give the answer.",
     "continue": "the learner is working through the problem. Check their latest step: if it is right, say so and ask for "
                 "the next one; if not, point to the problem and ask a guiding question.",
 }

@@ -99,6 +99,35 @@ def strip_thinking(text: str) -> str:
     return text.strip()
 
 
+# A reply that runs past its end-of-turn marker starts writing the next turns itself. With special tokens skipped in
+# decoding, those show up as a bare role name on its own line ("\nuser\n", "\nassistant\n").
+_RUN_ON = re.compile(r"(<\|im_end\|>|<\|im_start\|>|<end_of_turn>|<start_of_turn>|\n\s*(user|assistant|model|system)\s*\n)",
+                     re.IGNORECASE)
+
+
+def trim_run_on(text: str) -> str:
+    """Keep only the model's own turn: cut at the first end-of-turn marker or invented 'user'/'assistant' turn."""
+    m = _RUN_ON.search(text or "")
+    return (text[:m.start()] if m else text or "").strip()
+
+
+def stop_token_ids(tokenizer: Any) -> List[int]:
+    """Token ids that end a reply: the tokenizer's EOS plus the chat end-of-turn markers (Qwen <|im_end|>, Gemma
+    <end_of_turn>). Without these the model keeps going and writes the learner's next turn itself."""
+    ids: List[int] = []
+    eos = getattr(tokenizer, "eos_token_id", None)
+    ids += eos if isinstance(eos, list) else ([eos] if eos is not None else [])
+    for marker in ("<|im_end|>", "<end_of_turn>", "<|endoftext|>"):
+        try:
+            tid = tokenizer.convert_tokens_to_ids(marker)
+        except Exception:  # noqa: BLE001 - tokenizers without that token
+            continue
+        unk = getattr(tokenizer, "unk_token_id", None)
+        if isinstance(tid, int) and tid >= 0 and tid != unk and tid not in ids:
+            ids.append(tid)
+    return ids
+
+
 def _has_tokenizer(path: str) -> bool:
     return (Path(path) / "tokenizer_config.json").exists()
 
@@ -115,7 +144,7 @@ class _BaseBackend:
 
     def generate(self, messages: List[Message], max_new_tokens: int = 512, temperature: float = 0.2) -> str:
         with self._lock:
-            return strip_thinking(self._generate(messages, max_new_tokens, temperature))
+            return trim_run_on(strip_thinking(self._generate(messages, max_new_tokens, temperature)))
 
     def _encode(self, messages: List[Message]) -> Dict[str, Any]:
         return self.tokenizer.apply_chat_template(  # type: ignore[attr-defined]
@@ -159,7 +188,7 @@ class UnslothBackend(_BaseBackend):
 
         inputs = self._encode(messages)
         inputs = {k: v.to(self.model.device) if hasattr(v, "to") else v for k, v in inputs.items()}
-        kwargs = {"max_new_tokens": int(max_new_tokens), "use_cache": True}
+        kwargs = {"max_new_tokens": int(max_new_tokens), "use_cache": True, "eos_token_id": stop_token_ids(self.tokenizer)}
         # Hard stop so one slow call can never hold the GPU for minutes and queue everything behind it.
         kwargs["max_time"] = float(os.getenv("LLM_MAX_GEN_SECONDS", "90"))
         if temperature and temperature > 0:
@@ -217,7 +246,7 @@ class PeftBackend(_BaseBackend):
 
         inputs = self._encode(messages)
         inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
-        kwargs = {"max_new_tokens": int(max_new_tokens)}
+        kwargs = {"max_new_tokens": int(max_new_tokens), "eos_token_id": stop_token_ids(self.tokenizer)}
         if temperature and temperature > 0:
             kwargs.update(do_sample=True, temperature=float(temperature), top_p=0.95)
         else:
